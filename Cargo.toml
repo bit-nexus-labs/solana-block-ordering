@@ -1,0 +1,36 @@
+[package]
+name = "ordprobe"
+version = "0.1.0"
+edition = "2021"
+description = "Measures how Solana leaders order the probe's own transactions inside their blocks"
+license = "MIT"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive", "env"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rand = "0.8"
+tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
+chrono = { version = "0.4", features = ["serde"] }
+bincode = "1"
+bytes = "1"
+sha2 = "0.10"
+async-trait = "0.1"
+solana-rpc-client = "=4.2.2"
+solana-rpc-client-api = "=4.2.2"
+solana-rpc-client-types = "=4.2.2"
+solana-transaction-status-client-types = "=4.2.2"
+solana-tpu-client-next = { version = "=4.2.2", features = ["agave-unstable-api"] }
+solana-commitment-config = "3"
+solana-keypair = { version = "3", features = ["seed-derivable"] }
+solana-signer = "3"
+solana-pubkey = "4"
+solana-signature = "3"
+solana-hash = "*"
+solana-message = "4"
+solana-transaction = { version = "4", features = ["serde", "wincode"] }
+solana-system-interface = { version = "3", features = ["bincode"] }
+solana-compute-budget-interface = { version = "3", features = ["borsh"] }
+solana-instruction = "3"

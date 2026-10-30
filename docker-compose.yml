@@ -1,0 +1,34 @@
+# One command per step. Everything is a dry run unless you add --live yourself.
+#
+#   docker compose run --rm probe census                 # who runs which client
+#   docker compose run --rm probe keygen                 # new key in ./keys/probe.json
+#   docker compose run --rm probe run                    # dry-run session (builds, signs, simulates)
+#   docker compose run --rm probe run --live             # real session, limited by SPEND_CAP_LAMPORTS
+#   docker compose run --rm probe collect --session ID   # read back where probes landed
+#   docker compose run --rm analyze                      # rebuild results/ from data/
+
+services:
+  probe:
+    build:
+      context: .
+      target: probe
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      RPC_URL: ${RPC_URL:-https://api.devnet.solana.com}
+      SEND_RPC_URL: ${SEND_RPC_URL:-}
+      SPEND_CAP_LAMPORTS: ${SPEND_CAP_LAMPORTS:-45000000}
+      OUT_DIR: /data
+      KEYPAIR_PATH: /keys/probe.json
+    volumes:
+      - ./data:/data
+      - ${KEYS_DIR:-./keys}:/keys
+
+  analyze:
+    build:
+      context: .
+      target: analyze
+    volumes:
+      - ./data:/data:ro
+      - ./results:/results

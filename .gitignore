@@ -1,0 +1,7 @@
+/target
+.env
+/keys/
+*.json.key
+__pycache__/
+.pytest_cache/
+# data/ and results/ ARE committed: they are the evidence.
