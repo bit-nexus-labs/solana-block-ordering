@@ -295,10 +295,17 @@ def figures(pairs: pd.DataFrame, by_client: pd.DataFrame, out: Path) -> None:
     if by_client.empty:
         return
     fig, ax = plt.subplots(figsize=(7, 6))
+    def err(v, lo, hi):
+        # rounding can put an interval end a hair past the estimate; matplotlib rejects that
+        return [[max(v - lo, 0.0)], [max(hi - v, 0.0)]]
+
     for _, r in by_client.iterrows():
+        vals = [r.arrival_agree, r.fee_agree, r.arrival_agree_lo, r.arrival_agree_hi, r.fee_agree_lo, r.fee_agree_hi]
+        if any(pd.isna(v) for v in vals):
+            continue
         ax.errorbar(r.arrival_agree, r.fee_agree,
-                    xerr=[[r.arrival_agree - r.arrival_agree_lo], [r.arrival_agree_hi - r.arrival_agree]],
-                    yerr=[[r.fee_agree - r.fee_agree_lo], [r.fee_agree_hi - r.fee_agree]],
+                    xerr=err(r.arrival_agree, r.arrival_agree_lo, r.arrival_agree_hi),
+                    yerr=err(r.fee_agree, r.fee_agree_lo, r.fee_agree_hi),
                     fmt="o", capsize=3)
         ax.annotate(f"{r.client} (n={r.pairs})", (r.arrival_agree, r.fee_agree), fontsize=8,
                     xytext=(4, 4), textcoords="offset points")
@@ -341,7 +348,8 @@ def timing_table(wins: pd.DataFrame, skipped: pd.DataFrame) -> pd.DataFrame:
     for (client, path, phase), g in wins.groupby(["client", "path", "phase"]):
         n_sk = 0
         if not skipped.empty:
-            n_sk = int(((skipped.client_id == client) & (skipped.path == path)).sum())
+            ph = skipped["phase"] if "phase" in skipped.columns else pd.Series("pre", index=skipped.index)
+            n_sk = int(((skipped.client_id == client) & (skipped.path == path) & (ph.fillna("pre") == phase)).sum())
         rows.append({
             "client": client, "path": path, "phase": phase, "windows": len(g), "skipped": n_sk,
             "fire_offset": round(float(g.fire_offset.median()), 2),

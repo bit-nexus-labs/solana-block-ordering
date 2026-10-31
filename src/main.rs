@@ -130,8 +130,8 @@ struct RunArgs {
     /// Fire the first send this many slots before the window starts.
     #[arg(long, default_value_t = 0.5)]
     lead_slots: f64,
-    /// Extra lead for the `rpc` path (it reaches the leader about a slot later than direct QUIC).
-    #[arg(long, default_value_t = 1.0)]
+    /// Extra lead for the `rpc` path. Devnet showed no extra delay against direct QUIC, so 0 by default.
+    #[arg(long, default_value_t = 0.0)]
     rpc_extra_lead_slots: f64,
     /// Skip a window when, at firing time, the clock is more than this many slots past the planned point.
     #[arg(long, default_value_t = 1.0)]

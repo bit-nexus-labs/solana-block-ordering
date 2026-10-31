@@ -64,8 +64,8 @@ Safety rules built into the tool:
    Fee levels and the send order are **two independent random permutations**.
 6. It fires the batch either half a slot before the window starts or about one slot into it
    (the *phase*), one transaction every 2 ms ("burst") or every 25 ms ("spaced"), and logs the
-   wall-clock time and the probe's slot estimate of every send. The `rpc` path is fired one
-   slot earlier than the direct path, because it reaches the leader later. A window the probe
+   wall-clock time and the probe's slot estimate of every send (`--rpc-extra-lead-slots` can
+   fire the `rpc` path earlier if it reaches the leader later than direct QUIC). A window the probe
    would reach late is skipped and logged in `skipped.jsonl`, never sent late.
 7. `collect` reads where each transaction landed (`getSignatureStatuses`), the order of all
    transactions in those blocks (`getBlock`, `transactionDetails: "signatures"`), and who really

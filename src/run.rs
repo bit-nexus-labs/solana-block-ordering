@@ -446,7 +446,8 @@ pub async fn run_session(cfg: RunConfig) -> Result<()> {
 fn skip_log(dir: &std::path::Path, wp: &WindowPlan, reason: &str, est_slot: f64) -> Result<()> {
     let rec = serde_json::json!({
         "session": wp.session, "leader": wp.leader, "client_id": wp.client_id,
-        "first_slot": wp.first_slot, "path": wp.arm.path, "reason": reason, "est_slot": est_slot,
+        "first_slot": wp.first_slot, "path": wp.arm.path, "phase": wp.arm.phase, "reason": reason,
+        "est_slot": est_slot,
         "at": chrono::Utc::now(),
     });
     util::append_jsonl(&dir.join("skipped.jsonl"), std::slice::from_ref(&rec))
