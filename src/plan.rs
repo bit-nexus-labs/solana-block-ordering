@@ -7,7 +7,7 @@
 
 use {
     crate::{
-        model::{Arm, Contention, FeeDesign, NodeInfo, SendPath, WindowPlan},
+        model::{Arm, Contention, FeeDesign, NodeInfo, Phase, SendPath, WindowPlan},
         txbuild::FEE_LEVELS,
     },
     rand::{seq::SliceRandom, Rng},
@@ -21,12 +21,23 @@ pub const WINDOW_SLOTS: u64 = 4;
 /// return it; then the version string is the only hint and the label says so.
 pub fn client_label(node: &NodeInfo) -> String {
     if let Some(id) = node.client_id.as_deref() {
+        // Numeric codes that the RPC node cannot name are grouped, so one label stays stable.
+        if id.starts_with("Unknown") {
+            return "Unknown".to_string();
+        }
         if !id.is_empty() {
             return id.to_string();
         }
     }
+    let major = node
+        .version
+        .as_deref()
+        .and_then(|v| v.split('.').next()?.parse::<u32>().ok());
     match node.version.as_deref() {
-        Some(v) if v.starts_with("0.") => "Firedancer-family(version-only)".to_string(),
+        // Firedancer versions start with 0. (Frankendancer) or with a two-digit year.
+        Some(_) if matches!(major, Some(0) | Some(20..)) => {
+            "Firedancer-family(version-only)".to_string()
+        }
         Some(_) => "Agave-family(version-only)".to_string(),
         None => "Unknown".to_string(),
     }
@@ -48,9 +59,15 @@ pub fn group_windows(start_slot: u64, leaders: &[String]) -> Vec<Window> {
     while s + WINDOW_SLOTS <= end {
         let i = (s - start_slot) as usize;
         let leader = &leaders[i];
-        let same = leaders[i..i + WINDOW_SLOTS as usize].iter().all(|l| l == leader);
+        let same = leaders[i..i + WINDOW_SLOTS as usize]
+            .iter()
+            .all(|l| l == leader);
         if same {
-            out.push(Window { leader: leader.clone(), first_slot: s, last_slot: s + WINDOW_SLOTS - 1 });
+            out.push(Window {
+                leader: leader.clone(),
+                first_slot: s,
+                last_slot: s + WINDOW_SLOTS - 1,
+            });
         }
         s += WINDOW_SLOTS;
     }
@@ -78,7 +95,10 @@ impl Progress {
     pub fn record(&mut self, client: &str, leader: &str) {
         *self.by_client.entry(client.to_string()).or_default() += 1;
         *self.by_validator.entry(leader.to_string()).or_default() += 1;
-        let v = self.validators_by_client.entry(client.to_string()).or_default();
+        let v = self
+            .validators_by_client
+            .entry(client.to_string())
+            .or_default();
         if !v.iter().any(|x| x == leader) {
             v.push(leader.to_string());
         }
@@ -106,7 +126,9 @@ impl Progress {
     }
 
     pub fn done(&self, q: &Quotas, clients: &[String]) -> bool {
-        clients.iter().all(|c| self.by_client.get(c).copied().unwrap_or(0) >= q.per_client)
+        clients
+            .iter()
+            .all(|c| self.by_client.get(c).copied().unwrap_or(0) >= q.per_client)
     }
 }
 
@@ -122,8 +144,13 @@ pub fn pick_window<'a>(
 ) -> Option<&'a Window> {
     let first = windows.first()?.first_slot;
     let mut best: Option<(&Window, f64)> = None;
-    for w in windows.iter().take_while(|w| w.first_slot <= first + horizon_slots) {
-        let Some(node) = nodes.get(&w.leader) else { continue };
+    for w in windows
+        .iter()
+        .take_while(|w| w.first_slot <= first + horizon_slots)
+    {
+        let Some(node) = nodes.get(&w.leader) else {
+            continue;
+        };
         let client = client_label(node);
         if !wanted_clients.iter().any(|c| c == &client) {
             continue;
@@ -148,6 +175,8 @@ pub struct ArmConfig {
     pub equal_fee_share: f64,
     pub allow_tpu: bool,
     pub allow_rpc: bool,
+    /// Share of windows sent inside the window instead of just before it.
+    pub inside_share: f64,
 }
 
 /// Draws the experiment for one window.
@@ -157,7 +186,11 @@ pub fn draw_arm<R: Rng>(rng: &mut R, cfg: &ArmConfig, leader_has_tpu: bool) -> A
     } else {
         Contention::Shared
     };
-    let fees = if rng.gen_bool(cfg.equal_fee_share) { FeeDesign::Equal } else { FeeDesign::Mixed };
+    let fees = if rng.gen_bool(cfg.equal_fee_share) {
+        FeeDesign::Equal
+    } else {
+        FeeDesign::Mixed
+    };
     let can_tpu = cfg.allow_tpu && leader_has_tpu;
     let path = match (cfg.allow_rpc, can_tpu) {
         (true, true) => {
@@ -170,12 +203,28 @@ pub fn draw_arm<R: Rng>(rng: &mut R, cfg: &ArmConfig, leader_has_tpu: bool) -> A
         (false, true) => SendPath::Tpu,
         _ => SendPath::Rpc,
     };
-    let spacing_ms = if rng.gen_bool(0.5) { cfg.burst_spacing_ms } else { cfg.spaced_spacing_ms };
+    let spacing_ms = if rng.gen_bool(0.5) {
+        cfg.burst_spacing_ms
+    } else {
+        cfg.spaced_spacing_ms
+    };
     let n_tx = match contention {
         Contention::Shared => cfg.shared_n_tx,
         Contention::Independent => cfg.independent_payers,
     };
-    Arm { contention, fees, path, spacing_ms, n_tx }
+    let phase = if rng.gen_bool(cfg.inside_share.clamp(0.0, 1.0)) {
+        Phase::Inside
+    } else {
+        Phase::Pre
+    };
+    Arm {
+        contention,
+        fees,
+        path,
+        spacing_ms,
+        n_tx,
+        phase,
+    }
 }
 
 /// Fee level of every transaction (by transaction index) and the send order
@@ -195,7 +244,13 @@ pub fn draw_fees_and_order<R: Rng>(rng: &mut R, arm: &Arm) -> (Vec<usize>, Vec<u
     (levels, order)
 }
 
-pub fn window_plan(session: &str, window_id: u64, w: &Window, node: &NodeInfo, arm: Arm) -> WindowPlan {
+pub fn window_plan(
+    session: &str,
+    window_id: u64,
+    w: &Window,
+    node: &NodeInfo,
+    arm: Arm,
+) -> WindowPlan {
     WindowPlan {
         session: session.to_string(),
         window_id,
@@ -206,6 +261,9 @@ pub fn window_plan(session: &str, window_id: u64, w: &Window, node: &NodeInfo, a
         first_slot: w.first_slot,
         last_slot: w.last_slot,
         arm,
+        lead_slots: None,
+        est_slot_at_fire: None,
+        slot_ms_at_fire: None,
     }
 }
 
@@ -222,7 +280,7 @@ pub fn client_census(nodes: &HashMap<String, NodeInfo>) -> BTreeMap<String, (usi
 
 #[cfg(test)]
 mod tests {
-    use {super::*, rand::SeedableRng, rand::rngs::StdRng};
+    use {super::*, rand::rngs::StdRng, rand::SeedableRng};
 
     fn node(id: &str, client: &str) -> NodeInfo {
         NodeInfo {
@@ -255,10 +313,22 @@ mod tests {
         nodes.insert("A".into(), node("A", "Agave"));
         nodes.insert("F".into(), node("F", "Firedancer"));
         let ws = vec![
-            Window { leader: "A".into(), first_slot: 100, last_slot: 103 },
-            Window { leader: "F".into(), first_slot: 104, last_slot: 107 },
+            Window {
+                leader: "A".into(),
+                first_slot: 100,
+                last_slot: 103,
+            },
+            Window {
+                leader: "F".into(),
+                first_slot: 104,
+                last_slot: 107,
+            },
         ];
-        let q = Quotas { per_client: 4, per_validator: 2, validators_per_client: 3 };
+        let q = Quotas {
+            per_client: 4,
+            per_validator: 2,
+            validators_per_client: 3,
+        };
         let mut p = Progress::default();
         p.record("Agave", "A");
         p.record("Agave", "A2");
@@ -271,8 +341,16 @@ mod tests {
     fn respects_per_validator_cap() {
         let mut nodes = HashMap::new();
         nodes.insert("A".into(), node("A", "Agave"));
-        let ws = vec![Window { leader: "A".into(), first_slot: 100, last_slot: 103 }];
-        let q = Quotas { per_client: 10, per_validator: 1, validators_per_client: 5 };
+        let ws = vec![Window {
+            leader: "A".into(),
+            first_slot: 100,
+            last_slot: 103,
+        }];
+        let q = Quotas {
+            per_client: 10,
+            per_validator: 1,
+            validators_per_client: 5,
+        };
         let mut p = Progress::default();
         p.record("Agave", "A");
         assert!(pick_window(&ws, &nodes, &["Agave".to_string()], &q, &p, 50).is_none());
@@ -287,6 +365,7 @@ mod tests {
             path: SendPath::Rpc,
             spacing_ms: 2,
             n_tx: 12,
+            phase: Phase::Pre,
         };
         let (levels, order) = draw_fees_and_order(&mut rng, &arm);
         for l in 0..FEE_LEVELS.len() {

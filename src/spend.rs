@@ -12,12 +12,18 @@ pub struct SpendCap {
 impl SpendCap {
     #[allow(dead_code)]
     pub fn new(cap_lamports: u64) -> Self {
-        Self { cap_lamports, committed_lamports: 0 }
+        Self {
+            cap_lamports,
+            committed_lamports: 0,
+        }
     }
 
     /// Restores the amount already committed by earlier sessions (read from their logs).
     pub fn with_committed(cap_lamports: u64, committed_lamports: u64) -> Self {
-        Self { cap_lamports, committed_lamports }
+        Self {
+            cap_lamports,
+            committed_lamports,
+        }
     }
 
     pub fn committed(&self) -> u64 {

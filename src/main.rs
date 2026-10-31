@@ -127,8 +127,21 @@ struct RunArgs {
     no_tpu: bool,
     #[arg(long)]
     no_rpc: bool,
+    /// Fire the first send this many slots before the window starts.
     #[arg(long, default_value_t = 0.5)]
     lead_slots: f64,
+    /// Extra lead for the `rpc` path (it reaches the leader about a slot later than direct QUIC).
+    #[arg(long, default_value_t = 1.0)]
+    rpc_extra_lead_slots: f64,
+    /// Skip a window when, at firing time, the clock is more than this many slots past the planned point.
+    #[arg(long, default_value_t = 1.0)]
+    max_late_slots: f64,
+    /// Share of windows sent inside the window (about one slot in) instead of just before it.
+    #[arg(long, default_value_t = 0.5)]
+    inside_share: f64,
+    /// Where the first send of an `inside` window is aimed, in slots after the window start.
+    #[arg(long, default_value_t = 1.0)]
+    inside_offset_slots: f64,
     #[arg(long, default_value_t = 12)]
     min_prep_slots: u64,
     #[arg(long, default_value_t = 160)]
@@ -148,11 +161,18 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.cmd {
         Cmd::Census { min_stake_sol } => {
-            let rpc = RpcClient::new_with_commitment(cli.rpc_url.clone(), CommitmentConfig::confirmed());
+            let rpc =
+                RpcClient::new_with_commitment(cli.rpc_url.clone(), CommitmentConfig::confirmed());
             let mut nodes = run::snapshot_nodes(&rpc).await?;
             nodes.retain(|_, n| n.activated_stake >= min_stake_sol * 1_000_000_000);
             let with_id = nodes.values().filter(|n| n.client_id.is_some()).count();
-            println!("{} validators, {} report clientId", nodes.len(), with_id);
+            let staked = nodes.values().filter(|n| n.activated_stake > 0).count();
+            println!(
+                "{} gossip nodes ({} report clientId), {} of them staked validators (listed below)",
+                nodes.len(),
+                with_id,
+                staked
+            );
             for (c, (n, s)) in plan::client_census(&nodes) {
                 println!("{c:<34} {n:>6} validators {:>14} SOL", s / 1_000_000_000);
             }
@@ -173,23 +193,34 @@ async fn main() -> Result<()> {
             if cli.rpc_url.contains("mainnet") {
                 anyhow::bail!("airdrop is not available on mainnet");
             }
-            let rpc = RpcClient::new_with_commitment(cli.rpc_url.clone(), CommitmentConfig::confirmed());
+            let rpc =
+                RpcClient::new_with_commitment(cli.rpc_url.clone(), CommitmentConfig::confirmed());
             let kp = keys::load_main(&cli.keypair)?;
-            let sig = rpc.request_airdrop(&solana_signer::Signer::pubkey(&kp), lamports).await?;
+            let sig = rpc
+                .request_airdrop(&solana_signer::Signer::pubkey(&kp), lamports)
+                .await?;
             println!("airdrop requested: {sig}");
         }
         Cmd::Balance => wallet::balances(&cli.rpc_url, &cli.keypair, cli.payers).await?,
-        Cmd::Fund { each_lamports, live } => {
-            wallet::fund(&cli.rpc_url, &cli.keypair, cli.payers, each_lamports, live).await?
-        }
+        Cmd::Fund {
+            each_lamports,
+            live,
+        } => wallet::fund(&cli.rpc_url, &cli.keypair, cli.payers, each_lamports, live).await?,
         Cmd::Sweep { live } => wallet::sweep(&cli.rpc_url, &cli.keypair, cli.payers, live).await?,
-        Cmd::Collect { session, rps, no_tx_details } => {
+        Cmd::Collect {
+            session,
+            rps,
+            no_tx_details,
+        } => {
             collect::collect_session(&cli.rpc_url, &cli.out, &session, rps, !no_tx_details).await?
         }
         Cmd::Run(a) => {
             let seed = a.seed.unwrap_or_else(|| util::unix_ns() as u64);
             let cfg = run::RunConfig {
-                send_rpc_url: cli.send_rpc_url.clone().unwrap_or_else(|| cli.rpc_url.clone()),
+                send_rpc_url: cli
+                    .send_rpc_url
+                    .clone()
+                    .unwrap_or_else(|| cli.rpc_url.clone()),
                 read_rpc_url: cli.rpc_url,
                 keypair_path: cli.keypair,
                 out_dir: cli.out,
@@ -210,10 +241,14 @@ async fn main() -> Result<()> {
                     equal_fee_share: a.equal_fee_share,
                     allow_tpu: !a.no_tpu,
                     allow_rpc: !a.no_rpc,
+                    inside_share: a.inside_share,
                 },
                 max_windows: a.max_windows,
                 max_minutes: a.max_minutes,
                 lead_slots: a.lead_slots,
+                rpc_extra_lead_slots: a.rpc_extra_lead_slots,
+                max_late_slots: a.max_late_slots,
+                inside_offset_slots: a.inside_offset_slots,
                 min_prep_slots: a.min_prep_slots,
                 horizon_slots: a.horizon_slots,
                 nominal_slot_ms: a.slot_ms,

@@ -41,8 +41,8 @@ def read_jsonl(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
 
-def load_sessions(paths: list[Path]) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    sends, windows, blocks = [], [], []
+def load_sessions(paths: list[Path]) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    sends, windows, blocks, skipped = [], [], [], []
     for p in paths:
         s = read_jsonl(p / "sends.jsonl")
         if not s or all(r.get("dry_run") for r in s):
@@ -59,10 +59,12 @@ def load_sessions(paths: list[Path]) -> tuple[pd.DataFrame, pd.DataFrame, pd.Dat
         sends += s
         for w in read_jsonl(p / "windows.jsonl"):
             arm = w.pop("arm")
+            arm.setdefault("phase", "pre")  # sessions before the phase factor existed
             w.update({f"arm_{k}": v for k, v in arm.items()})
             windows.append(w)
         blocks += read_jsonl(p / "blocks.jsonl")
-    return pd.DataFrame(sends), pd.DataFrame(windows), pd.DataFrame(blocks)
+        skipped += read_jsonl(p / "skipped.jsonl")
+    return pd.DataFrame(sends), pd.DataFrame(windows), pd.DataFrame(blocks), pd.DataFrame(skipped)
 
 
 # ---------------------------------------------------------------- statistics
@@ -154,11 +156,17 @@ def window_rows(sends: pd.DataFrame, windows: pd.DataFrame) -> tuple[pd.DataFram
         w = w.iloc[0]
         own = g[(g.landed == True) & (g.block_producer == w.leader) & g.index_in_block.notna()]  # noqa: E712
         other = g[(g.landed == True) & (g.block_producer != w.leader)]  # noqa: E712
+        landed = g[g.landed == True]  # noqa: E712
+        first = g.sort_values("send_rank").iloc[0]
         row = {
             "session": w.session, "window_id": int(w.window_id), "leader": w.leader,
             "client": w.client_id, "version": w.version, "first_slot": int(w.first_slot),
             "path": w.arm_path, "contention": w.arm_contention, "fees": w.arm_fees,
-            "spacing_ms": int(w.arm_spacing_ms), "n_sent": len(g),
+            "spacing_ms": int(w.arm_spacing_ms), "phase": w.arm_phase, "n_sent": len(g),
+            # where the probe's clock was when the first transaction went out, in slots from
+            # the window start, and how many slots later the transactions landed
+            "fire_offset": float(first.est_slot_at_send - w.first_slot),
+            "land_delay": float((landed.slot - landed.est_slot_at_send).median()) if len(landed) else float("nan"),
             "n_landed_leader": len(own), "n_landed_other_leader": len(other),
             "n_dropped": int((g.landed != True).sum()),  # noqa: E712
             "slots_used": int(own.slot.nunique()) if len(own) else 0,
@@ -177,7 +185,7 @@ def window_rows(sends: pd.DataFrame, windows: pd.DataFrame) -> tuple[pd.DataFram
                 pairs.append({
                     "session": w.session, "window_id": int(w.window_id), "leader": w.leader,
                     "client": w.client_id, "path": w.arm_path, "contention": w.arm_contention,
-                    "spacing_ms": int(w.arm_spacing_ms), "fees": w.arm_fees,
+                    "spacing_ms": int(w.arm_spacing_ms), "fees": w.arm_fees, "phase": w.arm_phase,
                     "same_block": bool(a.slot == b.slot),
                     # +1 if the first-placed one was sent first / pays more, -1 if the opposite
                     "arrival_sign": int(np.sign(b.send_rank - a.send_rank)),
@@ -327,6 +335,23 @@ def figures(pairs: pd.DataFrame, by_client: pd.DataFrame, out: Path) -> None:
 
 # ---------------------------------------------------------------- main
 
+def timing_table(wins: pd.DataFrame, skipped: pd.DataFrame) -> pd.DataFrame:
+    """How well the probe hit the windows, per client and path. Used to calibrate the clock."""
+    rows = []
+    for (client, path, phase), g in wins.groupby(["client", "path", "phase"]):
+        n_sk = 0
+        if not skipped.empty:
+            n_sk = int(((skipped.client_id == client) & (skipped.path == path)).sum())
+        rows.append({
+            "client": client, "path": path, "phase": phase, "windows": len(g), "skipped": n_sk,
+            "fire_offset": round(float(g.fire_offset.median()), 2),
+            "land_delay": round(float(g.land_delay.median()), 2),
+            "landed_in_leader": round(float(g.n_landed_leader.sum() / max(g.n_sent.sum(), 1)), 2),
+            "landed_other_leader": round(float(g.n_landed_other_leader.sum() / max(g.n_sent.sum(), 1)), 2),
+        })
+    return pd.DataFrame(rows)
+
+
 def fmt(x, nd=2):
     return "" if x is None or (isinstance(x, float) and math.isnan(x)) else f"{x:.{nd}f}"
 
@@ -349,7 +374,7 @@ def main() -> int:
     paths = sorted(p for p in args.data.iterdir() if p.is_dir())
     if args.sessions:
         paths = [p for p in paths if p.name in args.sessions]
-    sends, windows, blocks = load_sessions(paths)
+    sends, windows, blocks, skipped = load_sessions(paths)
     if sends.empty:
         print("no live, collected sessions found", file=sys.stderr)
         return 1
@@ -363,12 +388,15 @@ def main() -> int:
     by_validator = pooled(pairs, wins, ["client", "leader"])
     by_arm = pooled(pairs, wins, ["client", "contention", "spacing_ms"])
     by_path = pooled(pairs, wins, ["client", "path"])
+    by_phase = pooled(pairs, wins, ["client", "phase"])
     for name, df in [("by_client", by_client), ("by_validator", by_validator),
-                     ("by_client_arm", by_arm), ("by_client_path", by_path)]:
+                     ("by_client_arm", by_arm), ("by_client_path", by_path), ("by_client_phase", by_phase)]:
         df.to_csv(args.out / f"{name}.csv", index=False)
 
     landing = wins.groupby("client")[["n_sent", "n_landed_leader", "n_landed_other_leader", "n_dropped"]].sum()
     landing.to_csv(args.out / "landing_by_client.csv")
+    timing = timing_table(wins, skipped)
+    timing.to_csv(args.out / "timing_by_client_path.csv", index=False)
     if not blocks.empty:
         b = blocks[blocks.scheduled_leader.astype(str) != ""]
         mism = b[(~b.skipped) & (b.block_producer.notna()) & (b.block_producer != b.scheduled_leader)]
@@ -387,7 +415,12 @@ def main() -> int:
     md += "\n## By validator\n\n" + markdown_table(by_validator, [c for c in vcols if c in by_validator.columns])
     acols = ["client", "contention", "spacing_ms", "pairs", "fee_agree", "arrival_agree", "verdict"]
     md += "\n## By client and arm\n\n" + markdown_table(by_arm, [c for c in acols if c in by_arm.columns])
-    md += "\n## Landing\n\n" + landing.to_markdown() + "\n" if hasattr(landing, "to_markdown") else ""
+    pcols = ["client", "phase", "pairs", "fee_agree", "arrival_agree", "fee_wins_conflicts", "verdict"]
+    md += "\n## By client and phase\n\n" + markdown_table(by_phase, [c for c in pcols if c in by_phase.columns])
+    md += "\n## Landing\n\n" + landing.to_markdown() + "\n"
+    md += ("\n## Timing\n\nfire_offset: probe clock at the first send, slots from the window start. "
+           "land_delay: landed slot minus probe clock at send (median). skipped: windows planned but not "
+           "sent because the clock was already past the firing point.\n\n" + timing.to_markdown(index=False) + "\n")
     (args.out / "results.md").write_text(md)
     print(md)
     return 0

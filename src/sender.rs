@@ -10,7 +10,9 @@ use {
     async_trait::async_trait,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
     solana_rpc_client_api::config::RpcSendTransactionConfig,
-    solana_tpu_client_next::{leader_updater::LeaderUpdater, Client, ClientBuilder, TransactionSender},
+    solana_tpu_client_next::{
+        leader_updater::LeaderUpdater, Client, ClientBuilder, TransactionSender,
+    },
     solana_transaction::Transaction,
     std::{
         net::{SocketAddr, UdpSocket},
@@ -29,7 +31,10 @@ pub async fn send_rpc(rpc: &RpcClient, tx: &Transaction) -> Result<()> {
         max_retries: Some(0),
         ..RpcSendTransactionConfig::default()
     };
-    rpc.send_transaction_with_config(tx, cfg).await.map(|_| ()).map_err(|e| anyhow!("{e}"))
+    rpc.send_transaction_with_config(tx, cfg)
+        .await
+        .map(|_| ())
+        .map_err(|e| anyhow!("{e}"))
 }
 
 /// Leader updater that always returns whatever address the probe pinned last.
@@ -57,14 +62,20 @@ impl TpuPath {
     pub fn start() -> Result<Self> {
         let target = Arc::new(Mutex::new(Vec::new()));
         let socket = UdpSocket::bind("0.0.0.0:0")?;
-        let (sender, client) = ClientBuilder::new(Box::new(PinnedTarget { target: target.clone() }))
-            .bind_socket(socket)
-            .leader_send_fanout(1)
-            .max_cache_size(NonZeroUsize::new(32).unwrap())
-            .max_reconnect_attempts(2)
-            .build()
-            .map_err(|e| anyhow!("tpu client: {e:?}"))?;
-        Ok(Self { target, sender, client: Some(client) })
+        let (sender, client) = ClientBuilder::new(Box::new(PinnedTarget {
+            target: target.clone(),
+        }))
+        .bind_socket(socket)
+        .leader_send_fanout(1)
+        .max_cache_size(NonZeroUsize::new(32).unwrap())
+        .max_reconnect_attempts(2)
+        .build()
+        .map_err(|e| anyhow!("tpu client: {e:?}"))?;
+        Ok(Self {
+            target,
+            sender,
+            client: Some(client),
+        })
     }
 
     pub fn pin(&self, addr: SocketAddr) {

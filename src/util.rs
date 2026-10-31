@@ -11,7 +11,10 @@ use {
 };
 
 pub fn unix_ns() -> i128 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos() as i128).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as i128)
+        .unwrap_or(0)
 }
 
 pub fn new_session_id(live: bool) -> String {
@@ -20,7 +23,13 @@ pub fn new_session_id(live: bool) -> String {
 }
 
 pub fn host_of(url: &str) -> String {
-    url.split("://").nth(1).unwrap_or(url).split(['/', '?']).next().unwrap_or("").to_string()
+    url.split("://")
+        .nth(1)
+        .unwrap_or(url)
+        .split(['/', '?'])
+        .next()
+        .unwrap_or("")
+        .to_string()
 }
 
 pub fn write_json<T: Serialize + ?Sized>(path: &Path, v: &T) -> Result<()> {
@@ -54,14 +63,20 @@ pub fn read_jsonl<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Vec<T>>
 /// Used to carry the spend cap across sessions.
 pub fn committed_live_spend(out_dir: &Path) -> Result<u64> {
     let mut total = 0u64;
-    let Ok(entries) = fs::read_dir(out_dir) else { return Ok(0) };
+    let Ok(entries) = fs::read_dir(out_dir) else {
+        return Ok(0);
+    };
     for e in entries.flatten() {
         let p = e.path().join("sends.jsonl");
         if !p.exists() {
             continue;
         }
         let rows: Vec<SendRecord> = read_jsonl(&p)?;
-        total += rows.iter().filter(|r| !r.dry_run && r.send_error.is_none()).map(|r| r.max_fee_lamports).sum::<u64>();
+        total += rows
+            .iter()
+            .filter(|r| !r.dry_run && r.send_error.is_none())
+            .map(|r| r.max_fee_lamports)
+            .sum::<u64>();
     }
     Ok(total)
 }
@@ -72,7 +87,10 @@ mod tests {
 
     #[test]
     fn host_strips_key() {
-        assert_eq!(host_of("https://mainnet.helius-rpc.com/?api-key=SECRET"), "mainnet.helius-rpc.com");
+        assert_eq!(
+            host_of("https://mainnet.helius-rpc.com/?api-key=SECRET"),
+            "mainnet.helius-rpc.com"
+        );
         assert_eq!(host_of("http://localhost:8899"), "localhost:8899");
     }
 }

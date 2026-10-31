@@ -40,6 +40,19 @@ pub enum SendPath {
     Tpu,
 }
 
+/// When the batch reaches the leader relative to its window.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum Phase {
+    /// Sent so that it arrives just before the window starts: the leader can see the
+    /// whole batch at once when it begins scheduling.
+    #[default]
+    Pre,
+    /// Sent so that it arrives while the leader is already producing (about one slot in):
+    /// the transactions reach the scheduler one by one.
+    Inside,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Arm {
     pub contention: Contention,
@@ -48,6 +61,8 @@ pub struct Arm {
     /// Gap between two consecutive sends in milliseconds.
     pub spacing_ms: u64,
     pub n_tx: usize,
+    #[serde(default)]
+    pub phase: Phase,
 }
 
 /// One planned leader window and the experiment assigned to it.
@@ -62,6 +77,15 @@ pub struct WindowPlan {
     pub first_slot: u64,
     pub last_slot: u64,
     pub arm: Arm,
+    /// How many slots before `first_slot` the first send was planned.
+    #[serde(default)]
+    pub lead_slots: Option<f64>,
+    /// The probe's slot estimate when the first transaction was sent.
+    #[serde(default)]
+    pub est_slot_at_fire: Option<f64>,
+    /// Slot duration the clock had learned at that moment.
+    #[serde(default)]
+    pub slot_ms_at_fire: Option<f64>,
 }
 
 /// One transaction as it was built and sent.

@@ -18,18 +18,33 @@ pub async fn balances(rpc_url: &str, keypair: &Path, payers: u32) -> Result<()> 
     let rpc = RpcClient::new_with_commitment(rpc_url.to_string(), CommitmentConfig::confirmed());
     let main = keys::load_main(keypair)?;
     let b = rpc.get_balance(&main.pubkey()).await?;
-    println!("main    {}  {:>12} lamports ({:.6} SOL)", main.pubkey(), b, b as f64 / 1e9);
+    println!(
+        "main    {}  {:>12} lamports ({:.6} SOL)",
+        main.pubkey(),
+        b,
+        b as f64 / 1e9
+    );
     let mut total = b;
     for (i, p) in keys::derive_payers(&main, payers)?.iter().enumerate() {
         let b = rpc.get_balance(&p.pubkey()).await?;
         total += b;
         println!("payer{i:<2} {}  {:>12} lamports", p.pubkey(), b);
     }
-    println!("total   {:>57} lamports ({:.6} SOL)", total, total as f64 / 1e9);
+    println!(
+        "total   {:>57} lamports ({:.6} SOL)",
+        total,
+        total as f64 / 1e9
+    );
     Ok(())
 }
 
-pub async fn fund(rpc_url: &str, keypair: &Path, payers: u32, each_lamports: u64, live: bool) -> Result<()> {
+pub async fn fund(
+    rpc_url: &str,
+    keypair: &Path,
+    payers: u32,
+    each_lamports: u64,
+    live: bool,
+) -> Result<()> {
     let rpc = RpcClient::new_with_commitment(rpc_url.to_string(), CommitmentConfig::confirmed());
     let main = keys::load_main(keypair)?;
     let rent = rpc.get_minimum_balance_for_rent_exemption(0).await?;
@@ -40,7 +55,11 @@ pub async fn fund(rpc_url: &str, keypair: &Path, payers: u32, each_lamports: u64
     for p in keys::derive_payers(&main, payers)? {
         let have = rpc.get_balance(&p.pubkey()).await?;
         if have < each_lamports {
-            ixs.push(system_instruction::transfer(&main.pubkey(), &p.pubkey(), each_lamports - have));
+            ixs.push(system_instruction::transfer(
+                &main.pubkey(),
+                &p.pubkey(),
+                each_lamports - have,
+            ));
         }
     }
     if ixs.is_empty() {
@@ -48,7 +67,11 @@ pub async fn fund(rpc_url: &str, keypair: &Path, payers: u32, each_lamports: u64
         return Ok(());
     }
     let total: u64 = ixs.len() as u64 * each_lamports;
-    println!("funding {} payers, up to {} lamports in total", ixs.len(), total);
+    println!(
+        "funding {} payers, up to {} lamports in total",
+        ixs.len(),
+        total
+    );
     if !live {
         println!("dry-run: nothing sent. Add --live to fund.");
         return Ok(());

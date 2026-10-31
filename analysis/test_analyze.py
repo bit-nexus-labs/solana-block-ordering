@@ -62,7 +62,7 @@ def run_case(rule: str, client: str) -> str:
     tmp = Path(tempfile.mkdtemp())
     try:
         make_session(tmp / "data", rule, client)
-        sends, windows, blocks = analyze.load_sessions(sorted((tmp / "data").iterdir()))
+        sends, windows, blocks, _ = analyze.load_sessions(sorted((tmp / "data").iterdir()))
         wins, pairs = analyze.window_rows(sends, windows)
         by_client = analyze.pooled(pairs, wins, ["client"])
         return by_client.iloc[0].verdict

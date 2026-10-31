@@ -57,13 +57,16 @@ Safety rules built into the tool:
 3. It picks the next window whose client still needs data (quotas per client and per validator,
    so one big validator cannot stand for its whole client).
 4. It draws an **experiment arm** for that window at random (seeded, logged):
-   contention × fee design × path × spacing (see below).
+   contention × fee design × path × spacing × phase (see below).
 5. It builds N transactions. Each is a self-transfer with a fixed compute budget
    (`SetComputeUnitLimit(1000)`, `SetComputeUnitPrice(p)`), so all have the **same cost** and
    differ only in the priority fee `p` and in the amount that makes the signature unique.
    Fee levels and the send order are **two independent random permutations**.
-6. It fires the batch half a slot before the window starts, one transaction every 2 ms
-   ("burst") or every 25 ms ("spaced"), and logs the wall-clock time of every send.
+6. It fires the batch either half a slot before the window starts or about one slot into it
+   (the *phase*), one transaction every 2 ms ("burst") or every 25 ms ("spaced"), and logs the
+   wall-clock time and the probe's slot estimate of every send. The `rpc` path is fired one
+   slot earlier than the direct path, because it reaches the leader later. A window the probe
+   would reach late is skipped and logged in `skipped.jsonl`, never sent late.
 7. `collect` reads where each transaction landed (`getSignatureStatuses`), the order of all
    transactions in those blocks (`getBlock`, `transactionDetails: "signatures"`), and who really
    produced each block (the `Fee` reward recipient).
@@ -76,6 +79,7 @@ Safety rules built into the tool:
 | fees | **mixed** (6 levels 0 … 5,000,000 µlamports/CU, each used twice) / **equal** (all the same) | mixed separates fee from arrival; equal shows the arrival rule alone |
 | path | **rpc** (`sendTransaction`, `skipPreflight`, `maxRetries 0`) / **tpu** (QUIC to the leader's `tpuQuic`, unstaked) | the route changes arrival order and timing |
 | spacing | **2 ms** / **25 ms** | short gaps test batching inside the scheduler, long gaps test streaming |
+| phase | **pre** (arrives just before the window) / **inside** (arrives about one slot in) | before the window the leader can see the whole batch at once; inside it, transactions reach the scheduler one by one |
 
 Assignment is random per window and independent of who the leader is, so arm effects and leader
 effects are not confounded.
@@ -113,6 +117,13 @@ scheduling decision.
 rank. Because fee level and send rank are independent random draws, a leader that sorts by fee
 and a leader that keeps arrival order produce different, distinguishable outcomes.
 
+**Timing.** The probe keeps its own estimate of the current slot from `getSlot` answers: the
+slot duration is a least-squares fit over the last answers, and the line is placed at the most
+advanced answer, because a load-balanced RPC endpoint can answer from a node that lags. The
+firing time is recomputed every 50 ms while waiting. `results/timing_by_client_path.csv`
+shows, per client and path, where the clock was at the first send and how many slots later the
+transactions landed, so every result can be checked against how well the window was hit.
+
 **Noise versus rule.** The unit of evidence is a pair of our transactions in one block. For each
 validator and each client we report the share of pairs ordered by arrival and by fee, with 95%
 confidence intervals from resampling **whole windows** (pairs from one window are not
@@ -133,6 +144,12 @@ synthetic data this procedure names a rule in about 5% of cases (`analysis/test_
   may treat staked traffic differently.
 * **Local fee markets**: all our transactions touch only our own accounts, so we do not measure
   ordering among transactions that fight over a popular account.
+
+## Running without Docker
+
+`cargo build --release` (Rust 1.97), then the same subcommands with `target/release/ordprobe`.
+The analysis needs Python 3.12 with `analysis/requirements.txt`; on newer Python versions
+install the latest `numpy pandas matplotlib tabulate pytest` instead of the pinned ones.
 
 ## Repository map
 

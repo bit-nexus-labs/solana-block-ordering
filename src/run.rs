@@ -3,7 +3,7 @@
 use {
     crate::{
         keys,
-        model::{Contention, NodeInfo, SendPath, SendRecord, WindowPlan},
+        model::{Contention, NodeInfo, Phase, SendPath, SendRecord, WindowPlan},
         plan::{self, ArmConfig, Progress, Quotas},
         sender::{self, TpuPath},
         slotclock::SlotClock,
@@ -44,6 +44,13 @@ pub struct RunConfig {
     pub max_minutes: u64,
     /// Fire the first send this many slots before the window's first slot.
     pub lead_slots: f64,
+    /// Extra lead for the `rpc` path, which reaches the leader later than direct QUIC.
+    pub rpc_extra_lead_slots: f64,
+    /// Where the first send of an `inside` window is aimed, in slots after the window start.
+    pub inside_offset_slots: f64,
+    /// Skip a window instead of sending when the clock is more than this many slots past the
+    /// planned firing point.
+    pub max_late_slots: f64,
     /// Ignore windows that start sooner than this (time to build and sign).
     pub min_prep_slots: u64,
     /// How far ahead to look when choosing between windows.
@@ -82,7 +89,10 @@ fn spawn_clock_sync(rpc: Arc<RpcClient>, clock: SlotClock, every: Duration) {
         loop {
             tokio::time::sleep(every).await;
             let t0 = Instant::now();
-            if let Ok(slot) = rpc.get_slot_with_commitment(CommitmentConfig::processed()).await {
+            if let Ok(slot) = rpc
+                .get_slot_with_commitment(CommitmentConfig::processed())
+                .await
+            {
                 let t1 = Instant::now();
                 clock.observe(slot, t0 + (t1 - t0) / 2);
             }
@@ -97,7 +107,10 @@ struct LeaderCache {
 
 impl LeaderCache {
     async fn refresh(&mut self, rpc: &RpcClient, from_slot: u64, count: u64) -> Result<()> {
-        let leaders = rpc.get_slot_leaders(from_slot, count).await.context("getSlotLeaders")?;
+        let leaders = rpc
+            .get_slot_leaders(from_slot, count)
+            .await
+            .context("getSlotLeaders")?;
         let leaders: Vec<String> = leaders.into_iter().map(|p| p.to_string()).collect();
         self.windows = plan::group_windows(from_slot, &leaders);
         self.fetched_to = from_slot + count;
@@ -109,10 +122,19 @@ pub async fn run_session(cfg: RunConfig) -> Result<()> {
     let session = util::new_session_id(cfg.live);
     let dir = cfg.out_dir.join(&session);
     std::fs::create_dir_all(&dir)?;
-    println!("session {session} ({})", if cfg.live { "LIVE" } else { "dry-run" });
+    println!(
+        "session {session} ({})",
+        if cfg.live { "LIVE" } else { "dry-run" }
+    );
 
-    let rpc = Arc::new(RpcClient::new_with_commitment(cfg.read_rpc_url.clone(), CommitmentConfig::confirmed()));
-    let send_rpc = Arc::new(RpcClient::new_with_commitment(cfg.send_rpc_url.clone(), CommitmentConfig::confirmed()));
+    let rpc = Arc::new(RpcClient::new_with_commitment(
+        cfg.read_rpc_url.clone(),
+        CommitmentConfig::confirmed(),
+    ));
+    let send_rpc = Arc::new(RpcClient::new_with_commitment(
+        cfg.send_rpc_url.clone(),
+        CommitmentConfig::confirmed(),
+    ));
 
     let main = keys::load_main(&cfg.keypair_path)?;
     let payers = keys::derive_payers(&main, cfg.arms.independent_payers as u32)?;
@@ -125,7 +147,10 @@ pub async fn run_session(cfg: RunConfig) -> Result<()> {
     let census = plan::client_census(&nodes);
     util::write_json(&dir.join("census.json"), &census)?;
     for (c, (n, s)) in &census {
-        println!("  client {c:<32} validators {n:>5}  stake {:>12} SOL", s / 1_000_000_000);
+        println!(
+            "  client {c:<32} validators {n:>5}  stake {:>12} SOL",
+            s / 1_000_000_000
+        );
     }
     let wanted: Vec<String> = match &cfg.clients {
         Some(list) => list.clone(),
@@ -133,9 +158,11 @@ pub async fn run_session(cfg: RunConfig) -> Result<()> {
     };
     println!("wanted clients: {}", wanted.join(", "));
 
-    let start_slot = rpc.get_slot_with_commitment(CommitmentConfig::processed()).await?;
+    let start_slot = rpc
+        .get_slot_with_commitment(CommitmentConfig::processed())
+        .await?;
     let clock = SlotClock::new(start_slot, cfg.nominal_slot_ms, cfg.clock_bias_slots);
-    spawn_clock_sync(rpc.clone(), clock.clone(), Duration::from_millis(1500));
+    spawn_clock_sync(rpc.clone(), clock.clone(), Duration::from_millis(1000));
 
     let committed = util::committed_live_spend(&cfg.out_dir)?;
     let mut cap = SpendCap::with_committed(cfg.spend_cap_lamports, committed);
@@ -151,7 +178,11 @@ pub async fn run_session(cfg: RunConfig) -> Result<()> {
         }
     }
 
-    let tpu = if cfg.live && cfg.arms.allow_tpu { Some(TpuPath::start()?) } else { None };
+    let tpu = if cfg.live && cfg.arms.allow_tpu {
+        Some(TpuPath::start()?)
+    } else {
+        None
+    };
 
     let mut rng = StdRng::seed_from_u64(cfg.seed);
     util::write_json(
@@ -161,11 +192,16 @@ pub async fn run_session(cfg: RunConfig) -> Result<()> {
             "read_rpc": util::host_of(&cfg.read_rpc_url), "send_rpc": util::host_of(&cfg.send_rpc_url),
             "start_slot": start_slot, "started_at": chrono::Utc::now(),
             "fee_levels_micro_lamports": FEE_LEVELS, "cu_limit": PROBE_CU_LIMIT,
-            "lead_slots": cfg.lead_slots, "quotas": format!("{:?}", cfg.quotas), "arms": format!("{:?}", cfg.arms),
+            "lead_slots": cfg.lead_slots, "rpc_extra_lead_slots": cfg.rpc_extra_lead_slots,
+            "max_late_slots": cfg.max_late_slots, "inside_offset_slots": cfg.inside_offset_slots, "clock_bias_slots": cfg.clock_bias_slots,
+            "quotas": format!("{:?}", cfg.quotas), "arms": format!("{:?}", cfg.arms),
         }),
     )?;
 
-    let mut cache = LeaderCache { windows: vec![], fetched_to: 0 };
+    let mut cache = LeaderCache {
+        windows: vec![],
+        fetched_to: 0,
+    };
     let mut progress = Progress::default();
     let started = Instant::now();
     let mut window_id: u64 = 0;
@@ -188,26 +224,44 @@ pub async fn run_session(cfg: RunConfig) -> Result<()> {
         let now = clock.estimate_now();
         let earliest = now.ceil() as u64 + cfg.min_prep_slots;
         if cache.fetched_to < earliest + cfg.horizon_slots + 8 {
-            cache.refresh(&rpc, earliest, (cfg.horizon_slots * 4).max(400)).await?;
+            cache
+                .refresh(&rpc, earliest, (cfg.horizon_slots * 4).max(400))
+                .await?;
         }
-        let upcoming: Vec<plan::Window> =
-            cache.windows.iter().filter(|w| w.first_slot >= earliest).cloned().collect();
-        let Some(w) = plan::pick_window(&upcoming, &nodes, &wanted, &cfg.quotas, &progress, cfg.horizon_slots)
+        let upcoming: Vec<plan::Window> = cache
+            .windows
+            .iter()
+            .filter(|w| w.first_slot >= earliest)
             .cloned()
-        else {
+            .collect();
+        let Some(w) = plan::pick_window(
+            &upcoming,
+            &nodes,
+            &wanted,
+            &cfg.quotas,
+            &progress,
+            cfg.horizon_slots,
+        )
+        .cloned() else {
             idle_loops += 1;
             if idle_loops % 20 == 1 {
-                println!("no eligible window in the next {} slots, waiting", cfg.horizon_slots);
+                println!(
+                    "no eligible window in the next {} slots, waiting",
+                    cfg.horizon_slots
+                );
             }
             tokio::time::sleep(Duration::from_millis((clock.slot_ms() * 4.0) as u64)).await;
             continue;
         };
         idle_loops = 0;
-        let node = nodes.get(&w.leader).cloned().context("leader not in node list")?;
+        let node = nodes
+            .get(&w.leader)
+            .cloned()
+            .context("leader not in node list")?;
         let tpu_addr: Option<SocketAddr> = node.tpu_quic.as_deref().and_then(|a| a.parse().ok());
         let arm = plan::draw_arm(&mut rng, &cfg.arms, tpu_addr.is_some());
         let (levels, order) = plan::draw_fees_and_order(&mut rng, &arm);
-        let wp = plan::window_plan(&session, window_id, &w, &node, arm.clone());
+        let mut wp = plan::window_plan(&session, window_id, &w, &node, arm.clone());
 
         let blockhash = rpc.get_latest_blockhash().await?;
         let mut txs: Vec<(Transaction, &Keypair, usize)> = Vec::with_capacity(arm.n_tx);
@@ -219,12 +273,18 @@ pub async fn run_session(cfg: RunConfig) -> Result<()> {
             };
             let price = FEE_LEVELS[level];
             let unique = 1 + (window_id % 1000) * 64 + i as u64;
-            txs.push((txbuild::build_probe(payer, price, unique, blockhash), payer, level));
+            txs.push((
+                txbuild::build_probe(payer, price, unique, blockhash),
+                payer,
+                level,
+            ));
             window_cost += txbuild::max_fee_lamports(price, PROBE_CU_LIMIT);
         }
         if cfg.live {
             if !cap.fits(window_cost) {
-                println!("stop: spend cap would be exceeded by the next window ({window_cost} lamports)");
+                println!(
+                    "stop: spend cap would be exceeded by the next window ({window_cost} lamports)"
+                );
                 break;
             }
             cap.reserve(window_cost)?;
@@ -236,14 +296,49 @@ pub async fn run_session(cfg: RunConfig) -> Result<()> {
             let _ = t.send(&txbuild::build_warmup(blockhash)).await;
         }
 
-        let fire_at = clock.instant_of(w.first_slot as f64 - cfg.lead_slots);
-        if fire_at < Instant::now() {
+        let base = match arm.phase {
+            Phase::Pre => cfg.lead_slots,
+            Phase::Inside => -cfg.inside_offset_slots,
+        };
+        let lead = base
+            + if arm.path == SendPath::Rpc {
+                cfg.rpc_extra_lead_slots
+            } else {
+                0.0
+            };
+        let target = w.first_slot as f64 - lead;
+        if clock.instant_of(target) < Instant::now() {
             // Nothing was sent. The in-memory reservation stays (conservative); the logs that
             // carry the cap to the next session only count transactions that were sent.
-            println!("window {} at slot {} came too early, skipped", window_id, w.first_slot);
+            println!(
+                "window {} at slot {} came too early, skipped",
+                window_id, w.first_slot
+            );
+            skip_log(&dir, &wp, "too_early", clock.estimate_now())?;
             continue;
         }
-        tokio::time::sleep_until(fire_at.into()).await;
+        // The clock keeps learning while we wait, so the firing time is recomputed in short
+        // steps instead of sleeping once until a time computed long before.
+        let fire_at = loop {
+            let at = clock.instant_of(target);
+            let now = Instant::now();
+            if at <= now {
+                break now;
+            }
+            tokio::time::sleep((at - now).min(Duration::from_millis(50))).await;
+        };
+        let est_at_fire = clock.estimate_now();
+        if est_at_fire > target + cfg.max_late_slots {
+            println!(
+                "window {} at slot {} would be sent late (clock says {:.1}), skipped",
+                window_id, w.first_slot, est_at_fire
+            );
+            skip_log(&dir, &wp, "too_late", est_at_fire)?;
+            continue;
+        }
+        wp.lead_slots = Some(lead);
+        wp.est_slot_at_fire = Some(est_at_fire);
+        wp.slot_ms_at_fire = Some(clock.slot_ms());
 
         let spacing = Duration::from_millis(arm.spacing_ms);
         let mut records: Vec<SendRecord> = Vec::with_capacity(arm.n_tx);
@@ -288,7 +383,10 @@ pub async fn run_session(cfg: RunConfig) -> Result<()> {
                     SendPath::Rpc => {
                         let r = send_rpc.clone();
                         let tx = tx.clone();
-                        rpc_tasks.push((records.len(), tokio::spawn(async move { sender::send_rpc(&r, &tx).await })));
+                        rpc_tasks.push((
+                            records.len(),
+                            tokio::spawn(async move { sender::send_rpc(&r, &tx).await }),
+                        ));
                     }
                 }
             }
@@ -307,7 +405,10 @@ pub async fn run_session(cfg: RunConfig) -> Result<()> {
                 replace_recent_blockhash: true,
                 ..RpcSimulateTransactionConfig::default()
             };
-            let msg = match rpc.simulate_transaction_with_config(&txs[order[0]].0, sim_cfg).await {
+            let msg = match rpc
+                .simulate_transaction_with_config(&txs[order[0]].0, sim_cfg)
+                .await
+            {
                 Ok(r) => match r.value.err {
                     None => "simulate ok".to_string(),
                     Some(e) => format!("simulate error: {e:?}"),
@@ -333,15 +434,35 @@ pub async fn run_session(cfg: RunConfig) -> Result<()> {
     if let Some(t) = tpu {
         t.shutdown().await;
     }
-    println!("session {session} finished: {window_id} windows. Data in {}", dir.display());
+    println!(
+        "session {session} finished: {window_id} windows. Data in {}",
+        dir.display()
+    );
     println!("next: ordprobe collect --session {session}");
     Ok(())
 }
 
+/// Windows that were planned but not sent, so a report can say how many and why.
+fn skip_log(dir: &std::path::Path, wp: &WindowPlan, reason: &str, est_slot: f64) -> Result<()> {
+    let rec = serde_json::json!({
+        "session": wp.session, "leader": wp.leader, "client_id": wp.client_id,
+        "first_slot": wp.first_slot, "path": wp.arm.path, "reason": reason, "est_slot": est_slot,
+        "at": chrono::Utc::now(),
+    });
+    util::append_jsonl(&dir.join("skipped.jsonl"), std::slice::from_ref(&rec))
+}
+
 fn print_window(wp: &WindowPlan, recs: &[SendRecord], committed: u64, live: bool) {
-    let errors = recs.iter().filter(|r| r.send_error.is_some() && !r.dry_run).count();
+    let errors = recs
+        .iter()
+        .filter(|r| r.send_error.is_some() && !r.dry_run)
+        .count();
+    let offset = wp
+        .est_slot_at_fire
+        .map(|e| e - wp.first_slot as f64)
+        .unwrap_or(f64::NAN);
     println!(
-        "window {:>4} slot {} leader {}.. {:<24} {:?}/{:?}/{:?} spacing {}ms n={} send_errors={} committed={}{}",
+        "window {:>4} slot {} leader {}.. {:<24} {:?}/{:?}/{:?}/{:?} spacing {}ms n={} fired_at {:+.1} send_errors={} committed={}{}",
         wp.window_id,
         wp.first_slot,
         &wp.leader[..6.min(wp.leader.len())],
@@ -349,8 +470,10 @@ fn print_window(wp: &WindowPlan, recs: &[SendRecord], committed: u64, live: bool
         wp.arm.path,
         wp.arm.contention,
         wp.arm.fees,
+        wp.arm.phase,
         wp.arm.spacing_ms,
         recs.len(),
+        offset,
         errors,
         committed,
         if live { "" } else { " (dry-run)" }

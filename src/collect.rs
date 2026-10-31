@@ -32,7 +32,10 @@ pub struct Throttle {
 
 impl Throttle {
     pub fn new(per_second: f64) -> Self {
-        Self { gap: Duration::from_secs_f64(1.0 / per_second.max(0.1)), last: tokio::time::Instant::now() }
+        Self {
+            gap: Duration::from_secs_f64(1.0 / per_second.max(0.1)),
+            last: tokio::time::Instant::now(),
+        }
     }
 
     pub async fn wait(&mut self) {
@@ -59,24 +62,42 @@ pub async fn fetch_block(rpc: &RpcClient, slot: u64, th: &mut Throttle) -> Resul
     });
     for attempt in 0..4 {
         th.wait().await;
-        match rpc.send::<Value>(RpcRequest::GetBlock, json!([slot, cfg])).await {
+        match rpc
+            .send::<Value>(RpcRequest::GetBlock, json!([slot, cfg]))
+            .await
+        {
             Ok(v) => {
                 let signatures = v["signatures"]
                     .as_array()
-                    .map(|a| a.iter().filter_map(|s| s.as_str().map(String::from)).collect())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|s| s.as_str().map(String::from))
+                            .collect()
+                    })
                     .unwrap_or_default();
                 let producer = v["rewards"].as_array().and_then(|rs| {
                     rs.iter()
                         .find(|r| r["rewardType"].as_str() == Some("Fee"))
                         .and_then(|r| r["pubkey"].as_str().map(String::from))
                 });
-                return Ok(Block { skipped: false, signatures, producer });
+                return Ok(Block {
+                    skipped: false,
+                    signatures,
+                    producer,
+                });
             }
             Err(e) => {
                 let msg = e.to_string();
                 // -32007 skipped, -32009 missing in long-term storage, -32004 not available yet
-                if msg.contains("-32007") || msg.contains("-32009") || msg.to_lowercase().contains("skipped") {
-                    return Ok(Block { skipped: true, signatures: vec![], producer: None });
+                if msg.contains("-32007")
+                    || msg.contains("-32009")
+                    || msg.to_lowercase().contains("skipped")
+                {
+                    return Ok(Block {
+                        skipped: true,
+                        signatures: vec![],
+                        producer: None,
+                    });
                 }
                 if attempt == 3 {
                     return Err(e).with_context(|| format!("getBlock {slot}"));
@@ -88,10 +109,18 @@ pub async fn fetch_block(rpc: &RpcClient, slot: u64, th: &mut Throttle) -> Resul
     unreachable!()
 }
 
-pub async fn collect_session(rpc_url: &str, out_dir: &Path, session: &str, rps: f64, tx_details: bool) -> Result<()> {
+pub async fn collect_session(
+    rpc_url: &str,
+    out_dir: &Path,
+    session: &str,
+    rps: f64,
+    tx_details: bool,
+) -> Result<()> {
     let dir = out_dir.join(session);
-    let sends: Vec<SendRecord> = util::read_jsonl(&dir.join("sends.jsonl")).context("sends.jsonl")?;
-    let windows: Vec<WindowPlan> = util::read_jsonl(&dir.join("windows.jsonl")).context("windows.jsonl")?;
+    let sends: Vec<SendRecord> =
+        util::read_jsonl(&dir.join("sends.jsonl")).context("sends.jsonl")?;
+    let windows: Vec<WindowPlan> =
+        util::read_jsonl(&dir.join("windows.jsonl")).context("windows.jsonl")?;
     if sends.iter().all(|s| s.dry_run) {
         println!("session {session} is a dry run: nothing was sent, nothing to collect");
         return Ok(());
@@ -100,11 +129,17 @@ pub async fn collect_session(rpc_url: &str, out_dir: &Path, session: &str, rps: 
     let mut th = Throttle::new(rps);
 
     // 1. Landing slot of every probe.
-    let sigs: Vec<Signature> = sends.iter().map(|s| Signature::from_str(&s.signature)).collect::<Result<_, _>>()?;
+    let sigs: Vec<Signature> = sends
+        .iter()
+        .map(|s| Signature::from_str(&s.signature))
+        .collect::<Result<_, _>>()?;
     let mut status: HashMap<String, (u64, Option<String>)> = HashMap::new();
     for chunk in sigs.chunks(200) {
         th.wait().await;
-        let r = rpc.get_signature_statuses_with_history(chunk).await.context("getSignatureStatuses")?;
+        let r = rpc
+            .get_signature_statuses_with_history(chunk)
+            .await
+            .context("getSignatureStatuses")?;
         for (sig, st) in chunk.iter().zip(r.value) {
             if let Some(st) = st {
                 status.insert(sig.to_string(), (st.slot, st.err.map(|e| format!("{e:?}"))));
@@ -117,13 +152,22 @@ pub async fn collect_session(rpc_url: &str, out_dir: &Path, session: &str, rps: 
     let mut slots: BTreeMap<u64, (u64, String)> = BTreeMap::new(); // slot -> (window, scheduled leader)
     for w in &windows {
         for s in w.first_slot.saturating_sub(2)..=w.last_slot + 4 {
-            let leader = if (w.first_slot..=w.last_slot).contains(&s) { w.leader.clone() } else { String::new() };
+            let leader = if (w.first_slot..=w.last_slot).contains(&s) {
+                w.leader.clone()
+            } else {
+                String::new()
+            };
             slots.entry(s).or_insert((w.window_id, leader));
         }
     }
-    let window_of: HashMap<String, u64> = sends.iter().map(|s| (s.signature.clone(), s.window_id)).collect();
+    let window_of: HashMap<String, u64> = sends
+        .iter()
+        .map(|s| (s.signature.clone(), s.window_id))
+        .collect();
     for (sig, (slot, _)) in &status {
-        slots.entry(*slot).or_insert((window_of[sig], String::new()));
+        slots
+            .entry(*slot)
+            .or_insert((window_of[sig], String::new()));
     }
     let mut blocks: HashMap<u64, Block> = HashMap::new();
     let mut block_rows = Vec::new();
@@ -172,7 +216,10 @@ pub async fn collect_session(rpc_url: &str, out_dir: &Path, session: &str, rps: 
             if tx_details {
                 th.wait().await;
                 let cfg = json!({"encoding": "json", "commitment": "confirmed", "maxSupportedTransactionVersion": 0});
-                if let Ok(v) = rpc.send::<Value>(RpcRequest::GetTransaction, json!([s.signature, cfg])).await {
+                if let Ok(v) = rpc
+                    .send::<Value>(RpcRequest::GetTransaction, json!([s.signature, cfg]))
+                    .await
+                {
                     row.fee_lamports = v["meta"]["fee"].as_u64();
                     row.compute_units_consumed = v["meta"]["computeUnitsConsumed"].as_u64();
                 }
@@ -187,7 +234,10 @@ pub async fn collect_session(rpc_url: &str, out_dir: &Path, session: &str, rps: 
     util::append_jsonl(&dir.join("blocks.jsonl"), &block_rows)?;
     let landed = land_rows.iter().filter(|r| r.landed).count();
     let fees: u64 = land_rows.iter().filter_map(|r| r.fee_lamports).sum();
-    println!("collected: {landed} landed, {} blocks, fees paid {fees} lamports", block_rows.len());
+    println!(
+        "collected: {landed} landed, {} blocks, fees paid {fees} lamports",
+        block_rows.len()
+    );
     println!("files: {}/landed.jsonl, blocks.jsonl", dir.display());
     Ok(())
 }
