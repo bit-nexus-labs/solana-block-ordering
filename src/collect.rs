@@ -53,14 +53,18 @@ pub struct Block {
 }
 
 pub async fn fetch_block(rpc: &RpcClient, slot: u64, th: &mut Throttle) -> Result<Block> {
-    let cfg = json!({
-        "encoding": "json",
-        "transactionDetails": "signatures",
-        "rewards": true,
-        "commitment": "confirmed",
-        "maxSupportedTransactionVersion": 0
-    });
-    for attempt in 0..4 {
+    // Mainnet carries version-1 transactions; a block that holds one is refused (-32015) unless
+    // the request allows version 1. An RPC node that does not know version 1 rejects the
+    // parameter instead, and then the request falls back to version 0.
+    let mut max_version = 1;
+    for attempt in 0..5 {
+        let cfg = json!({
+            "encoding": "json",
+            "transactionDetails": "signatures",
+            "rewards": true,
+            "commitment": "confirmed",
+            "maxSupportedTransactionVersion": max_version
+        });
         th.wait().await;
         match rpc
             .send::<Value>(RpcRequest::GetBlock, json!([slot, cfg]))
@@ -99,7 +103,13 @@ pub async fn fetch_block(rpc: &RpcClient, slot: u64, th: &mut Throttle) -> Resul
                         producer: None,
                     });
                 }
-                if attempt == 3 {
+                if max_version == 1
+                    && (msg.contains("-32602") || msg.contains("maxSupportedTransactionVersion"))
+                {
+                    max_version = 0;
+                    continue;
+                }
+                if attempt == 4 {
                     return Err(e).with_context(|| format!("getBlock {slot}"));
                 }
                 tokio::time::sleep(Duration::from_millis(800 * (attempt + 1))).await;
