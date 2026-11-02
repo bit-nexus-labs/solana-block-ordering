@@ -129,7 +129,10 @@ validator and each client we report the share of pairs ordered by arrival and by
 confidence intervals from resampling **whole windows** (pairs from one window are not
 independent), the share of "conflict" pairs (arrival and fee disagree) won by the fee, and a
 pairwise logistic model `P(first) ~ β_arrival·arrival + β_fee·fee`. A rule is called only if its
-interval excludes 0.5 (coin flip); "strict" means at least 95% of pairs follow it. On random
+interval excludes 0.5 (coin flip); "strict" means at least 95% of pairs follow it. A group
+needs at least 20 same-block pairs from at least 4 windows to get a verdict; with fewer windows
+the resampled interval is not trustworthy, and the group is reported as "insufficient data"
+with its raw shares still shown. On random
 synthetic data this procedure names a rule in about 5% of cases (`analysis/test_analyze.py`).
 "No detectable rule" is a legitimate result.
 

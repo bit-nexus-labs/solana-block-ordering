@@ -220,7 +220,7 @@ def cluster_share(sub: pd.DataFrame, hit: pd.Series, n_boot: int = 4000) -> tupl
 
 def pair_summary(p: pd.DataFrame) -> dict:
     """Share of pairs ordered by arrival and by fee, using only pairs where the rule decides."""
-    res = {"pairs": len(p)}
+    res = {"pairs": len(p), "pair_windows": int((p.session.astype(str) + "/" + p.window_id.astype(str)).nunique())}
     arr = p[p.arrival_sign != 0]
     fee = p[p.fee_sign != 0]
     res["arrival_agree"], res["arrival_agree_lo"], res["arrival_agree_hi"] = cluster_share(arr, arr.arrival_sign > 0)
@@ -241,13 +241,18 @@ def pair_summary(p: pd.DataFrame) -> dict:
     return res
 
 
+MIN_VERDICT_WINDOWS = 4
+
+
 def classify(r: dict) -> str:
     """Label from same-block pairs. Thresholds are stated in the README."""
     fee_lo, arr_lo = r.get("fee_agree_lo", float("nan")), r.get("arrival_agree_lo", float("nan"))
     fee_hi, arr_hi = r.get("fee_agree_hi", float("nan")), r.get("arrival_agree_hi", float("nan"))
     fee_sig = not math.isnan(fee_lo) and fee_lo > 0.5
     arr_sig = not math.isnan(arr_lo) and arr_lo > 0.5
-    if r.get("pairs", 0) < 20:
+    # Window-level resampling needs enough windows; with two or three, one tiny window drawn
+    # three times decides the interval.
+    if r.get("pairs", 0) < 20 or r.get("pair_windows", 0) < MIN_VERDICT_WINDOWS:
         return "insufficient data"
     if fee_sig and (not arr_sig or r.get("fee_wins_lo", 0) > 0.5):
         strict = r["fee_agree"]
