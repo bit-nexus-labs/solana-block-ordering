@@ -1,0 +1,25 @@
+{
+  "arms": "ArmConfig { shared_n_tx: 12, independent_payers: 8, burst_spacing_ms: 2, spaced_spacing_ms: 25, equal_fee_share: 0.25, allow_tpu: true, allow_rpc: true, inside_share: 0.5 }",
+  "clock_bias_slots": 1.0,
+  "cu_limit": 1000,
+  "fee_levels_micro_lamports": [
+    0,
+    1000,
+    10000,
+    100000,
+    1000000,
+    5000000
+  ],
+  "inside_offset_slots": 1.0,
+  "lead_slots": 0.5,
+  "live": true,
+  "max_late_slots": 1.0,
+  "quotas": "Quotas { per_client: 3, per_validator: 1, validators_per_client: 3 }",
+  "read_rpc": "mainnet.helius-rpc.com",
+  "rpc_extra_lead_slots": 0.0,
+  "seed": 1793579770981913200,
+  "send_rpc": "api.mainnet-beta.solana.com",
+  "session": "20261102T003610Z-live",
+  "start_slot": 464295835,
+  "started_at": "2026-11-02T00:36:12.341467800Z"
+}

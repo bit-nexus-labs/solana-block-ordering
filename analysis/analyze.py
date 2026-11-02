@@ -320,7 +320,7 @@ def figures(pairs: pd.DataFrame, by_client: pd.DataFrame, out: Path) -> None:
     ax.set_ylim(0, 1.02)
     ax.set_xlabel("share of same-block pairs ordered by send order (arrival)")
     ax.set_ylabel("share of same-block pairs ordered by fee (priority)")
-    ax.set_title("Which rule orders our transactions? (95% Wilson CI)")
+    ax.set_title("Which rule orders our transactions? (95% CI, windows resampled)")
     fig.tight_layout()
     fig.savefig(out / "rule_map_by_client.png", dpi=150)
     plt.close(fig)
@@ -346,6 +346,75 @@ def figures(pairs: pd.DataFrame, by_client: pd.DataFrame, out: Path) -> None:
 
 
 # ---------------------------------------------------------------- main
+
+def _window_counts(sub: pd.DataFrame, hit: pd.Series) -> tuple[np.ndarray, np.ndarray]:
+    keys = sub.session.astype(str) + "/" + sub.window_id.astype(str)
+    per = pd.DataFrame({"k": hit.astype(int).to_numpy(), "w": keys.to_numpy()}).groupby("w").k.agg(["sum", "count"])
+    return per["sum"].to_numpy(dtype=float), per["count"].to_numpy(dtype=float)
+
+
+def phase_effect_table(pairs: pd.DataFrame, n_boot: int = 4000) -> pd.DataFrame:
+    """Conflict pairs (send order and fee disagree) won by the fee, before vs inside the window.
+
+    The difference pre minus inside gets a 95% CI by resampling windows within each phase;
+    `p_le_0` is the share of resampled differences at or below zero (one-sided).
+    """
+    sb = pairs[pairs.same_block & (pairs.arrival_sign != 0) & (pairs.fee_sign != 0)
+               & (pairs.arrival_sign != pairs.fee_sign)]
+    rows = []
+    groups = [(c, sb[sb.client == c]) for c in sorted(sb.client.unique())] + [("all clients", sb)]
+    for client, g in groups:
+        r = {"client": client}
+        boots = {}
+        for ph in ("pre", "inside"):
+            sub = g[g.phase == ph]
+            r[f"{ph}_conflicts"] = len(sub)
+            r[f"{ph}_windows"] = int((sub.session.astype(str) + "/" + sub.window_id.astype(str)).nunique())
+            if len(sub) == 0:
+                r[f"fee_wins_{ph}"] = float("nan")
+                continue
+            k, n = _window_counts(sub, sub.fee_sign > 0)
+            r[f"fee_wins_{ph}"] = k.sum() / n.sum()
+            idx = RNG.integers(0, len(k), size=(n_boot, len(k)))
+            boots[ph] = k[idx].sum(axis=1) / np.maximum(n[idx].sum(axis=1), 1)
+            r[f"fee_wins_{ph}_lo"] = float(np.quantile(boots[ph], 0.025))
+            r[f"fee_wins_{ph}_hi"] = float(np.quantile(boots[ph], 0.975))
+        if len(boots) == 2 and min(r["pre_windows"], r["inside_windows"]) >= MIN_VERDICT_WINDOWS:
+            d = boots["pre"] - boots["inside"]
+            r["diff"] = r["fee_wins_pre"] - r["fee_wins_inside"]
+            r["diff_lo"], r["diff_hi"] = float(np.quantile(d, 0.025)), float(np.quantile(d, 0.975))
+            r["p_le_0"] = float((d <= 0).mean())
+        rows.append(r)
+    return pd.DataFrame(rows)
+
+
+def phase_figure(pe: pd.DataFrame, out: Path) -> None:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    pe = pe[pe.get("diff").notna()] if "diff" in pe else pe.iloc[0:0]
+    if pe.empty:
+        return
+    fig, ax = plt.subplots(figsize=(8, 0.55 * len(pe) + 1.6))
+    for i, (_, r) in enumerate(pe.iloc[::-1].iterrows()):
+        ax.plot([r.fee_wins_inside, r.fee_wins_pre], [i, i], color="#bbbbbb", lw=2, zorder=1)
+        for ph, col, dy in (("inside", "#4c72b0", -0.12), ("pre", "#dd8452", 0.12)):
+            v, lo, hi = r[f"fee_wins_{ph}"], r[f"fee_wins_{ph}_lo"], r[f"fee_wins_{ph}_hi"]
+            ax.errorbar(v, i + dy, xerr=[[max(v - lo, 0)], [max(hi - v, 0)]], fmt="o", color=col,
+                        capsize=2, label=("arrives inside the window" if ph == "inside" else
+                                          "arrives before the window") if i == 0 else None, zorder=2)
+    ax.set_yticks(range(len(pe)))
+    ax.set_yticklabels(list(pe.client.iloc[::-1]), fontsize=9)
+    ax.axvline(0.5, color="grey", lw=0.8, ls="--")
+    ax.set_xlim(0, 1)
+    ax.set_xlabel("conflict pairs won by the higher fee (send order says the opposite)")
+    ax.set_title("When the batch waits for the leader, the fee decides more often")
+    ax.legend(loc="lower right", fontsize=8)
+    fig.tight_layout()
+    fig.savefig(out / "phase_effect.png", dpi=150)
+    plt.close(fig)
+
 
 def timing_table(wins: pd.DataFrame, skipped: pd.DataFrame) -> pd.DataFrame:
     """How well the probe hit the windows, per client and path. Used to calibrate the clock."""
@@ -418,6 +487,9 @@ def main() -> int:
         (args.out / "blocks_summary.json").write_text(json.dumps(b_summary, indent=2))
 
     figures(pairs, by_client, args.out)
+    pe = phase_effect_table(pairs)
+    pe.to_csv(args.out / "phase_effect.csv", index=False)
+    phase_figure(pe, args.out)
 
     cols = ["client", "validators", "windows", "pairs", "fee_agree", "fee_agree_lo", "fee_agree_hi",
             "arrival_agree", "arrival_agree_lo", "arrival_agree_hi", "conflict_pairs", "fee_wins_conflicts",
@@ -430,6 +502,12 @@ def main() -> int:
     md += "\n## By client and arm\n\n" + markdown_table(by_arm, [c for c in acols if c in by_arm.columns])
     pcols = ["client", "phase", "pairs", "fee_agree", "arrival_agree", "fee_wins_conflicts", "verdict"]
     md += "\n## By client and phase\n\n" + markdown_table(by_phase, [c for c in pcols if c in by_phase.columns])
+    pecols = ["client", "pre_conflicts", "pre_windows", "fee_wins_pre", "fee_wins_pre_lo", "fee_wins_pre_hi",
+              "inside_conflicts", "inside_windows", "fee_wins_inside", "fee_wins_inside_lo", "fee_wins_inside_hi",
+              "diff", "diff_lo", "diff_hi", "p_le_0"]
+    md += ("\n## Phase effect\n\nConflict pairs (send order and fee disagree) won by the fee, when the batch "
+           "arrives before the window vs inside it. diff = pre minus inside, 95% CI from resampling windows.\n\n"
+           + markdown_table(pe, [c for c in pecols if c in pe.columns]))
     md += "\n## Landing\n\n" + landing.to_markdown() + "\n"
     md += ("\n## Timing\n\nfire_offset: probe clock at the first send, slots from the window start. "
            "land_delay: landed slot minus probe clock at send (median). skipped: windows planned but not "
