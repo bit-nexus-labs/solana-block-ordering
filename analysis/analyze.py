@@ -146,6 +146,15 @@ def logistic_fit(X: np.ndarray, y: np.ndarray, iters: int = 50) -> tuple[np.ndar
 
 # ---------------------------------------------------------------- per window
 
+def _provider(w) -> str:
+    """Send path label: the RPC provider for `rpc` windows (sessions before the provider
+    factor used the public RPC only), `direct-quic` for `tpu` windows."""
+    if w.arm_path != "rpc":
+        return "direct-quic"
+    v = w.get("send_provider") if hasattr(w, "get") else None
+    return v if isinstance(v, str) and v else "public"
+
+
 def window_rows(sends: pd.DataFrame, windows: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Per-window metrics and the table of all within-window pairs."""
     out, pairs = [], []
@@ -163,6 +172,7 @@ def window_rows(sends: pd.DataFrame, windows: pd.DataFrame) -> tuple[pd.DataFram
             "client": w.client_id, "version": w.version, "first_slot": int(w.first_slot),
             "path": w.arm_path, "contention": w.arm_contention, "fees": w.arm_fees,
             "spacing_ms": int(w.arm_spacing_ms), "phase": w.arm_phase, "n_sent": len(g),
+            "provider": _provider(w),
             # where the probe's clock was when the first transaction went out, in slots from
             # the window start, and how many slots later the transactions landed
             "fire_offset": float(first.est_slot_at_send - w.first_slot),
@@ -186,6 +196,7 @@ def window_rows(sends: pd.DataFrame, windows: pd.DataFrame) -> tuple[pd.DataFram
                     "session": w.session, "window_id": int(w.window_id), "leader": w.leader,
                     "client": w.client_id, "path": w.arm_path, "contention": w.arm_contention,
                     "spacing_ms": int(w.arm_spacing_ms), "fees": w.arm_fees, "phase": w.arm_phase,
+                    "provider": _provider(w),
                     "same_block": bool(a.slot == b.slot),
                     # +1 if the first-placed one was sent first / pays more, -1 if the opposite
                     "arrival_sign": int(np.sign(b.send_rank - a.send_rank)),
@@ -461,6 +472,31 @@ def phase_figure(pe: pd.DataFrame, out: Path) -> None:
     plt.close(fig)
 
 
+def provider_table(wins: pd.DataFrame, pairs: pd.DataFrame) -> pd.DataFrame:
+    """Landing and ordering per send path / RPC provider."""
+    rows = []
+    for prov, g in wins.groupby("provider"):
+        r = {"provider": prov, "windows": len(g), "sent": int(g.n_sent.sum()),
+             "landed_in_leader": round(g.n_landed_leader.sum() / max(g.n_sent.sum(), 1), 2),
+             "landed_other_leader": round(g.n_landed_other_leader.sum() / max(g.n_sent.sum(), 1), 2),
+             "never_landed": round(g.n_dropped.sum() / max(g.n_sent.sum(), 1), 2),
+             "land_delay": round(float(g.land_delay.median()), 2)}
+        pp = pairs[pairs.provider == prov] if "provider" in pairs else pairs.iloc[0:0]
+        sb = pp[pp.same_block]
+        if len(sb):
+            summ = pair_summary(sb)
+            r["pairs"] = len(sb)
+            r["arrival_agree"] = round(float(summ["arrival_agree"]), 2)
+            r["fee_agree"] = round(float(summ["fee_agree"]), 2) if pd.notna(summ["fee_agree"]) else float("nan")
+            pe = phase_effect_table(pp)
+            a = pe[pe.client == "all clients"]
+            if len(a) and "diff" in a and pd.notna(a.iloc[0].get("diff")):
+                r["phase_diff"] = round(float(a.iloc[0]["diff"]), 2)
+                r["phase_diff_ci"] = f"{a.iloc[0].diff_lo:+.2f} … {a.iloc[0].diff_hi:+.2f}"
+        rows.append(r)
+    return pd.DataFrame(rows)
+
+
 def timing_table(wins: pd.DataFrame, skipped: pd.DataFrame) -> pd.DataFrame:
     """How well the probe hit the windows, per client and path. Used to calibrate the clock."""
     rows = []
@@ -523,6 +559,8 @@ def main() -> int:
     landing = wins.groupby("client")[["n_sent", "n_landed_leader", "n_landed_other_leader", "n_dropped"]].sum()
     landing.to_csv(args.out / "landing_by_client.csv")
     timing = timing_table(wins, skipped)
+    prov = provider_table(wins, pairs)
+    prov.to_csv(args.out / "by_provider.csv", index=False)
     timing.to_csv(args.out / "timing_by_client_path.csv", index=False)
     if not blocks.empty:
         b = blocks[blocks.scheduled_leader.astype(str) != ""]
@@ -554,6 +592,9 @@ def main() -> int:
            "arrives before the window vs inside it. diff = pre minus inside, 95% CI from resampling windows.\n\n"
            + markdown_table(pe, [c for c in pecols if c in pe.columns]))
     md += "\n## Landing\n\n" + landing.to_markdown() + "\n"
+    if not prov.empty:
+        md += ("\n## By send path and provider\n\nShares of sent transactions, and the phase effect pooled "
+               "over all clients for each provider.\n\n" + prov.to_markdown(index=False) + "\n")
     md += ("\n## Timing\n\nfire_offset: probe clock at the first send, slots from the window start. "
            "land_delay: landed slot minus probe clock at send (median). skipped: windows planned but not "
            "sent because the clock was already past the firing point.\n\n" + timing.to_markdown(index=False) + "\n")

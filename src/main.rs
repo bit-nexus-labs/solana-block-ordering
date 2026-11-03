@@ -93,6 +93,11 @@ enum Cmd {
 
 #[derive(clap::Args, Debug)]
 struct RunArgs {
+    /// Names of environment variables that hold extra send RPC URLs (comma separated), e.g.
+    /// `RPCFAST_URL,DIGITALENERGY_URL`. Each `rpc` window then draws one provider at random.
+    /// The URLs are read from the environment only; logs keep the host name.
+    #[arg(long, value_delimiter = ',')]
+    extra_send_rpc_env: Vec<String>,
     /// Actually send. Without it the session only builds, signs and simulates.
     #[arg(long)]
     live: bool,
@@ -216,7 +221,15 @@ async fn main() -> Result<()> {
         }
         Cmd::Run(a) => {
             let seed = a.seed.unwrap_or_else(|| util::unix_ns() as u64);
+            let mut extra_send_rpcs = Vec::new();
+            for name in &a.extra_send_rpc_env {
+                let url = std::env::var(name)
+                    .map_err(|_| anyhow::anyhow!("environment variable {name} is not set"))?;
+                let label = name.trim_end_matches("_URL").to_lowercase();
+                extra_send_rpcs.push((label, url));
+            }
             let cfg = run::RunConfig {
+                extra_send_rpcs,
                 send_rpc_url: cli
                     .send_rpc_url
                     .clone()

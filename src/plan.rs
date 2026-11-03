@@ -264,6 +264,7 @@ pub fn window_plan(
         lead_slots: None,
         est_slot_at_fire: None,
         slot_ms_at_fire: None,
+        send_provider: None,
     }
 }
 

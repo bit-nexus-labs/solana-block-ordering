@@ -86,6 +86,9 @@ pub struct WindowPlan {
     /// Slot duration the clock had learned at that moment.
     #[serde(default)]
     pub slot_ms_at_fire: Option<f64>,
+    /// Label of the RPC provider used for the `rpc` path in this window (no key, only a name).
+    #[serde(default)]
+    pub send_provider: Option<String>,
 }
 
 /// One transaction as it was built and sent.

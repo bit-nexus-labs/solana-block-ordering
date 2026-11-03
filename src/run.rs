@@ -32,6 +32,9 @@ use {
 pub struct RunConfig {
     pub read_rpc_url: String,
     pub send_rpc_url: String,
+    /// Extra send RPCs as (label, url). When present, every `rpc` window draws one of the
+    /// default send RPC and these at random, so providers are compared under the same load.
+    pub extra_send_rpcs: Vec<(String, String)>,
     pub keypair_path: PathBuf,
     pub out_dir: PathBuf,
     pub live: bool,
@@ -131,10 +134,33 @@ pub async fn run_session(cfg: RunConfig) -> Result<()> {
         cfg.read_rpc_url.clone(),
         CommitmentConfig::confirmed(),
     ));
-    let send_rpc = Arc::new(RpcClient::new_with_commitment(
-        cfg.send_rpc_url.clone(),
-        CommitmentConfig::confirmed(),
-    ));
+    let mut send_rpcs: Vec<(String, Arc<RpcClient>)> = vec![(
+        "public".to_string(),
+        Arc::new(RpcClient::new_with_commitment(
+            cfg.send_rpc_url.clone(),
+            CommitmentConfig::confirmed(),
+        )),
+    )];
+    for (label, url) in &cfg.extra_send_rpcs {
+        send_rpcs.push((
+            label.clone(),
+            Arc::new(RpcClient::new_with_commitment(
+                url.clone(),
+                CommitmentConfig::confirmed(),
+            )),
+        ));
+    }
+    if send_rpcs.len() > 1 {
+        let labels: Vec<String> = send_rpcs
+            .iter()
+            .zip(
+                std::iter::once(&cfg.send_rpc_url)
+                    .chain(cfg.extra_send_rpcs.iter().map(|(_, u)| u)),
+            )
+            .map(|((l, _), u)| format!("{l} ({})", util::host_of(u)))
+            .collect();
+        println!("send RPCs drawn per rpc window: {}", labels.join(", "));
+    }
 
     let main = keys::load_main(&cfg.keypair_path)?;
     let payers = keys::derive_payers(&main, cfg.arms.independent_payers as u32)?;
@@ -190,6 +216,7 @@ pub async fn run_session(cfg: RunConfig) -> Result<()> {
         &serde_json::json!({
             "session": session, "live": cfg.live, "seed": cfg.seed,
             "read_rpc": util::host_of(&cfg.read_rpc_url), "send_rpc": util::host_of(&cfg.send_rpc_url),
+            "extra_send_rpcs": cfg.extra_send_rpcs.iter().map(|(l, u)| format!("{l}={}", util::host_of(u))).collect::<Vec<_>>(),
             "start_slot": start_slot, "started_at": chrono::Utc::now(),
             "fee_levels_micro_lamports": FEE_LEVELS, "cu_limit": PROBE_CU_LIMIT,
             "lead_slots": cfg.lead_slots, "rpc_extra_lead_slots": cfg.rpc_extra_lead_slots,
@@ -262,6 +289,15 @@ pub async fn run_session(cfg: RunConfig) -> Result<()> {
         let arm = plan::draw_arm(&mut rng, &cfg.arms, tpu_addr.is_some());
         let (levels, order) = plan::draw_fees_and_order(&mut rng, &arm);
         let mut wp = plan::window_plan(&session, window_id, &w, &node, arm.clone());
+        let provider_idx = if arm.path == SendPath::Rpc && send_rpcs.len() > 1 {
+            rand::Rng::gen_range(&mut rng, 0..send_rpcs.len())
+        } else {
+            0
+        };
+        if arm.path == SendPath::Rpc {
+            wp.send_provider = Some(send_rpcs[provider_idx].0.clone());
+        }
+        let send_rpc = send_rpcs[provider_idx].1.clone();
 
         let blockhash = rpc.get_latest_blockhash().await?;
         let mut txs: Vec<(Transaction, &Keypair, usize)> = Vec::with_capacity(arm.n_tx);
