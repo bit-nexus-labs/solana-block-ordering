@@ -91,3 +91,20 @@ if __name__ == "__main__":
     for t in [test_kendall_basics, test_detects_fifo, test_detects_priority, test_random_is_no_rule]:
         t()
         print("ok", t.__name__)
+
+
+def test_whole_block_parsing_and_order_share():
+    import blocks as B
+    assert B.b58decode("1111") == b"\x00" * 4
+    tx = {"transaction": {"signatures": ["s"], "message": {
+        "accountKeys": ["payer", B.COMPUTE_BUDGET, "96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5"],
+        "instructions": [{"programIdIndex": 1, "data": "3QXxj5Zbuae3"}]}},
+        "meta": {"err": None, "fee": 5003, "computeUnitsConsumed": 450,
+                 "preBalances": [10, 1, 0], "postBalances": [5, 1, 7]}}
+    row = B.compact_tx(4, tx)
+    assert row[0] == 4 and row[1] == 0 and row[2] == 1 and row[7] == 7 and row[8] == 0
+    assert row[6] == int.from_bytes(B.b58decode("3QXxj5Zbuae3")[1:9], "little")
+    share, n = B.higher_first_share([0, 1, 2], [30, 20, 10])
+    assert share == 1.0 and n == 3
+    share, n = B.higher_first_share([0, 1, 2], [10, 20, 30])
+    assert share == 0.0
