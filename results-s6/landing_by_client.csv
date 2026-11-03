@@ -1,0 +1,9 @@
+client,n_sent,n_landed_leader,n_landed_other_leader,n_dropped
+Agave,112,33,35,44
+AgaveBam,124,64,50,10
+FireBAM,128,43,5,80
+Firedancer,124,42,42,40
+HarmonicAgave,120,58,23,39
+HarmonicFiredancer,120,68,32,20
+JitoLabs,120,62,38,20
+Rakurai,128,55,20,53

@@ -1,0 +1,5 @@
+provider,windows,sent,landed_in_leader,landed_other_leader,never_landed,land_delay,pairs,arrival_agree,fee_agree,phase_diff,phase_diff_ci
+digitalenergy,19,180,0.23,0.57,0.2,2.88,110,0.48,0.69,,
+direct-quic,160,1600,0.4,0.03,0.57,-0.05,2014,0.68,0.73,0.4,+0.17 … +0.59
+public,225,2320,0.52,0.28,0.21,-0.1,3936,0.71,0.62,0.02,-0.12 … +0.15
+rpcfast,16,160,0.54,0.41,0.05,-0.11,243,0.81,0.59,,
