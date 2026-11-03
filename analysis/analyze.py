@@ -292,57 +292,84 @@ def pooled(pairs: pd.DataFrame, wins: pd.DataFrame, by: list[str]) -> pd.DataFra
 
 # ---------------------------------------------------------------- figures
 
-def figures(pairs: pd.DataFrame, by_client: pd.DataFrame, out: Path) -> None:
+INK, MUTED, GRID = "#0b0b0b", "#898781", "#e1e0d9"
+BLUE, ORANGE, YELLOW, NEUTRAL = "#2a78d6", "#eb6834", "#eda100", "#c3c2b7"
+
+
+def _style(ax) -> None:
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    for side in ("left", "bottom"):
+        ax.spines[side].set_color(MUTED)
+    ax.tick_params(colors=INK, labelsize=9)
+    ax.grid(axis="x", color=GRID, lw=0.6)
+    ax.set_axisbelow(True)
+
+
+def figures(pairs: pd.DataFrame, by_client: pd.DataFrame, out: Path, wins: pd.DataFrame | None = None) -> None:
+    """Static figures for the report: a rule map per client and the landing by path."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     if by_client.empty:
         return
-    fig, ax = plt.subplots(figsize=(7, 6))
-    def err(v, lo, hi):
-        # rounding can put an interval end a hair past the estimate; matplotlib rejects that
-        return [[max(v - lo, 0.0)], [max(hi - v, 0.0)]]
-
-    for _, r in by_client.iterrows():
-        vals = [r.arrival_agree, r.fee_agree, r.arrival_agree_lo, r.arrival_agree_hi, r.fee_agree_lo, r.fee_agree_hi]
-        if any(pd.isna(v) for v in vals):
-            continue
-        ax.errorbar(r.arrival_agree, r.fee_agree,
-                    xerr=err(r.arrival_agree, r.arrival_agree_lo, r.arrival_agree_hi),
-                    yerr=err(r.fee_agree, r.fee_agree_lo, r.fee_agree_hi),
-                    fmt="o", capsize=3)
-        ax.annotate(f"{r.client} (n={r.pairs})", (r.arrival_agree, r.fee_agree), fontsize=8,
-                    xytext=(4, 4), textcoords="offset points")
-    ax.axhline(0.5, color="grey", lw=0.8, ls="--")
-    ax.axvline(0.5, color="grey", lw=0.8, ls="--")
-    ax.set_xlim(0, 1.02)
-    ax.set_ylim(0, 1.02)
-    ax.set_xlabel("share of same-block pairs ordered by send order (arrival)")
-    ax.set_ylabel("share of same-block pairs ordered by fee (priority)")
-    ax.set_title("Which rule orders our transactions? (95% CI, windows resampled)")
+    bc = by_client.sort_values("arrival_agree").reset_index(drop=True)
+    fig, axes = plt.subplots(1, 2, figsize=(10, 0.42 * len(bc) + 1.8), sharey=True)
+    for ax, (col, title, colr) in zip(axes, [("arrival_agree", "ordered by send order (arrival)", BLUE),
+                                             ("fee_agree", "ordered by fee (priority)", ORANGE)]):
+        for i, r in bc.iterrows():
+            v, lo, hi = r[col], r[f"{col}_lo"], r[f"{col}_hi"]
+            if pd.isna(v):
+                continue
+            ok = r.verdict != "insufficient data"
+            c = colr if ok else NEUTRAL
+            if not (pd.isna(lo) or pd.isna(hi)):
+                ax.plot([lo, hi], [i, i], color=c, lw=2, solid_capstyle="round")
+            ax.plot(v, i, "o", ms=8, color=c, mec="white", mew=2)
+        ax.axvline(0.5, color=MUTED, lw=0.8, ls="--")
+        ax.set_xlim(0, 1)
+        ax.set_title(f"share of same-block pairs {title}", fontsize=10, color=INK)
+        _style(ax)
+    axes[0].set_yticks(range(len(bc)))
+    axes[0].set_yticklabels([f"{c} ({w} windows)" for c, w in zip(bc.client, bc.windows)], fontsize=9)
+    fig.suptitle("Which rule orders our transactions? Dots: share; bars: 95% CI from resampling windows. "
+                 "Grey: fewer than 4 windows.", fontsize=9, color=INK)
     fig.tight_layout()
     fig.savefig(out / "rule_map_by_client.png", dpi=150)
     plt.close(fig)
 
-    sb = pairs[pairs.same_block & (pairs.fee_sign != 0)]
-    if not sb.empty:
-        fig, ax = plt.subplots(figsize=(8, 4.5))
-        clients = sorted(sb.client.unique())
-        for i, c in enumerate(clients):
-            for j, (sp, g) in enumerate(sb[sb.client == c].groupby("spacing_ms")):
-                share = (g.fee_sign > 0).mean()
-                ax.bar(i + j * 0.38 - 0.19, share, width=0.36, label=f"{sp} ms" if i == 0 else None,
-                       color=["#4c72b0", "#dd8452"][j % 2])
-        ax.set_xticks(range(len(clients)))
-        ax.set_xticklabels(clients, rotation=30, ha="right", fontsize=8)
-        ax.axhline(0.5, color="grey", lw=0.8, ls="--")
-        ax.set_ylabel("higher fee placed first (share of pairs)")
-        ax.set_title("Fee ordering by client and send spacing (same-block pairs)")
-        ax.legend(title="spacing")
-        fig.tight_layout()
-        fig.savefig(out / "fee_share_by_spacing.png", dpi=150)
-        plt.close(fig)
+    if wins is None or wins.empty:
+        return
+    g = wins.groupby(["path", "phase"])[["n_sent", "n_landed_leader", "n_landed_other_leader", "n_dropped"]].sum()
+    g = g.reindex([("rpc", "pre"), ("rpc", "inside"), ("tpu", "pre"), ("tpu", "inside")]).dropna()
+    if g.empty:
+        return
+    fig, ax = plt.subplots(figsize=(8, 0.6 * len(g) + 1.6))
+    labels = [f"{'RPC' if p == 'rpc' else 'direct QUIC'}, {'before' if ph == 'pre' else 'inside'} the window"
+              for p, ph in g.index]
+    left = np.zeros(len(g))
+    for col, name, colr in [("n_landed_leader", "landed in the scheduled leader's block", BLUE),
+                            ("n_landed_other_leader", "landed in another leader's block", YELLOW),
+                            ("n_dropped", "never landed", NEUTRAL)]:
+        share = (g[col] / g.n_sent).to_numpy()
+        ax.barh(range(len(g)), share, left=left, color=colr, edgecolor="white", linewidth=2, height=0.6, label=name)
+        for i, (l, w) in enumerate(zip(left, share)):
+            if w >= 0.08:
+                ax.text(l + w / 2, i, f"{w:.0%}", ha="center", va="center", fontsize=8,
+                        color="#ffffff" if colr == BLUE else INK)
+        left += share
+    ax.set_yticks(range(len(g)))
+    ax.set_yticklabels(labels, fontsize=9)
+    ax.invert_yaxis()
+    ax.set_xlim(0, 1)
+    ax.set_xlabel("share of our transactions", fontsize=9, color=INK)
+    ax.set_title("Where our transactions ended up, by path and timing", fontsize=10, color=INK)
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.25), ncol=3, fontsize=8, frameon=False)
+    _style(ax)
+    fig.tight_layout()
+    fig.savefig(out / "landing_by_path.png", dpi=150)
+    plt.close(fig)
 
 
 # ---------------------------------------------------------------- main
@@ -389,29 +416,47 @@ def phase_effect_table(pairs: pd.DataFrame, n_boot: int = 4000) -> pd.DataFrame:
 
 
 def phase_figure(pe: pd.DataFrame, out: Path) -> None:
+    """Dumbbell per client: conflict pairs won by the fee, before vs inside the window."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    pe = pe[pe.get("diff").notna()] if "diff" in pe else pe.iloc[0:0]
+    if pe.empty or "fee_wins_pre" not in pe or "fee_wins_inside" not in pe:
+        return
+    pe = pe[pe.fee_wins_pre.notna() & pe.fee_wins_inside.notna()].reset_index(drop=True)
     if pe.empty:
         return
-    fig, ax = plt.subplots(figsize=(8, 0.55 * len(pe) + 1.6))
-    for i, (_, r) in enumerate(pe.iloc[::-1].iterrows()):
-        ax.plot([r.fee_wins_inside, r.fee_wins_pre], [i, i], color="#bbbbbb", lw=2, zorder=1)
-        for ph, col, dy in (("inside", "#4c72b0", -0.12), ("pre", "#dd8452", 0.12)):
-            v, lo, hi = r[f"fee_wins_{ph}"], r[f"fee_wins_{ph}_lo"], r[f"fee_wins_{ph}_hi"]
-            ax.errorbar(v, i + dy, xerr=[[max(v - lo, 0)], [max(hi - v, 0)]], fmt="o", color=col,
-                        capsize=2, label=("arrives inside the window" if ph == "inside" else
-                                          "arrives before the window") if i == 0 else None, zorder=2)
+    order = list(pe[pe.client != "all clients"].sort_values("fee_wins_pre").client) + ["all clients"]
+    pe = pe.set_index("client").loc[[c for c in order if c in pe.client.values] if False else
+                                     [c for c in order if c in set(pe.client)]].reset_index()
+    fig, ax = plt.subplots(figsize=(10, 0.5 * len(pe) + 1.9))
+    for i, r in pe.iterrows():
+        enough = min(r.pre_windows, r.inside_windows) >= MIN_VERDICT_WINDOWS
+        ax.plot([r.fee_wins_inside, r.fee_wins_pre], [i, i], color=GRID, lw=3, zorder=1, solid_capstyle="round")
+        for ph, colr, mk in (("inside", BLUE, "o"), ("pre", ORANGE, "s")):
+            v = r[f"fee_wins_{ph}"]
+            ax.plot(v, i, mk, ms=9, color=colr if enough else "white", mec=colr, mew=2, zorder=3)
+        note = (f"+{r['diff']:.2f} (95% CI {r.diff_lo:+.2f} … {r.diff_hi:+.2f})" if pd.notna(r.get("diff"))
+                else "fewer than 4 windows in a phase")
+        ax.text(1.02, i, note, va="center", fontsize=8, color=INK if pd.notna(r.get("diff")) else MUTED,
+                transform=ax.get_yaxis_transform())
     ax.set_yticks(range(len(pe)))
-    ax.set_yticklabels(list(pe.client.iloc[::-1]), fontsize=9)
-    ax.axvline(0.5, color="grey", lw=0.8, ls="--")
+    ax.set_yticklabels([("all clients" if c == "all clients" else c) for c in pe.client], fontsize=9)
+    for lab in ax.get_yticklabels():
+        if lab.get_text() == "all clients":
+            lab.set_fontweight("bold")
+    ax.axvline(0.5, color=MUTED, lw=0.8, ls="--")
     ax.set_xlim(0, 1)
-    ax.set_xlabel("conflict pairs won by the higher fee (send order says the opposite)")
-    ax.set_title("When the batch waits for the leader, the fee decides more often")
-    ax.legend(loc="lower right", fontsize=8)
-    fig.tight_layout()
+    ax.set_xlabel("conflict pairs won by the higher fee (send order said the opposite)", fontsize=9, color=INK)
+    ax.set_title("When the batch waits for the leader, the fee decides more often", fontsize=11, color=INK)
+    from matplotlib.lines import Line2D
+    handles = [Line2D([], [], ls="", marker="o", ms=8, color=BLUE, label="arrives inside the window"),
+               Line2D([], [], ls="", marker="s", ms=8, color=ORANGE, label="arrives before the window"),
+               Line2D([], [], ls="", marker="o", ms=8, color="white", mec=MUTED, mew=2,
+                      label="hollow: fewer than 4 windows in a phase")]
+    ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.62, -0.16), ncol=3, fontsize=8, frameon=False)
+    _style(ax)
+    fig.tight_layout(rect=(0, 0, 0.74, 1))
     fig.savefig(out / "phase_effect.png", dpi=150)
     plt.close(fig)
 
@@ -486,7 +531,7 @@ def main() -> int:
                      "producer_differs_from_schedule": len(mism)}
         (args.out / "blocks_summary.json").write_text(json.dumps(b_summary, indent=2))
 
-    figures(pairs, by_client, args.out)
+    figures(pairs, by_client, args.out, wins)
     pe = phase_effect_table(pairs)
     pe.to_csv(args.out / "phase_effect.csv", index=False)
     phase_figure(pe, args.out)

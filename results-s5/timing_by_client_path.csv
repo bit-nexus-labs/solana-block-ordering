@@ -1,0 +1,17 @@
+client,path,phase,windows,skipped,fire_offset,land_delay,landed_in_leader,landed_other_leader
+Agave,rpc,inside,6,0,1.12,-0.46,0.62,0.0
+Agave,rpc,pre,6,0,-0.41,-0.56,0.14,0.17
+AgaveBam,rpc,inside,5,0,1.09,-0.15,0.81,0.0
+AgaveBam,rpc,pre,7,0,-0.41,0.03,0.51,0.28
+FireBAM,rpc,inside,5,0,1.12,-0.9,0.54,0.23
+FireBAM,rpc,pre,7,0,-0.39,-0.69,0.15,0.39
+Firedancer,rpc,inside,5,0,1.11,1.36,0.61,0.2
+Firedancer,rpc,pre,7,0,-0.37,-0.61,0.47,0.53
+HarmonicAgave,rpc,inside,5,0,1.09,-0.22,0.77,0.17
+HarmonicAgave,rpc,pre,7,0,-0.39,-0.62,0.5,0.5
+HarmonicFiredancer,rpc,inside,6,0,1.13,0.09,1.0,0.0
+HarmonicFiredancer,rpc,pre,6,0,-0.38,-0.39,0.52,0.48
+JitoLabs,rpc,inside,3,0,1.12,-1.09,0.78,0.22
+JitoLabs,rpc,pre,9,0,-0.39,0.13,0.32,0.65
+Rakurai,rpc,inside,6,0,1.11,-1.12,0.38,0.12
+Rakurai,rpc,pre,6,0,-0.4,-0.6,0.0,0.19
