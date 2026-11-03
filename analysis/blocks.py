@@ -220,6 +220,12 @@ def cmd_fetch(a) -> int:
 
 # ---------------------------------------------------------------- analysis
 
+TOP_PRICE = 100_000  # micro-lamports per CU; roughly the top tenth of paying transactions
+PRICE_BINS = [-1, 0, 1e3, 1e4, 1e5, 1e6, 1e18]
+PRICE_LABELS = ["0", "1–1k", "1k–10k", "10k–100k", "100k–1M", "≥1M"]
+NEAR = 10  # "nearby" = at most this many positions apart
+
+
 def load_blocks(data: Path, sessions: list[str] | None):
     import pandas as pd
     blocks, txs = [], []
@@ -236,8 +242,14 @@ def load_blocks(data: Path, sessions: list[str] | None):
                 blocks.append({**b, "n_tx": len(rows)})
                 for r in rows:
                     txs.append([b["session"], b["slot"], b["client"], b["leader"]] + r)
-    return (pd.DataFrame(blocks),
-            pd.DataFrame(txs, columns=["session", "slot", "client", "leader"] + ROW_FIELDS))
+    tx = pd.DataFrame(txs, columns=["session", "slot", "client", "leader"] + ROW_FIELDS)
+    if not tx.empty:
+        last = tx.groupby(["session", "slot"]).idx.transform("max").clip(lower=1)
+        tx["rel"] = tx.idx / last  # 0 = first in the block, 1 = last
+        tx["price"] = tx.cu_price.fillna(0)
+        tx["top"] = tx.price >= TOP_PRICE
+        tx["bucket"] = pd.cut(tx.price, PRICE_BINS, labels=PRICE_LABELS)
+    return pd.DataFrame(blocks), tx
 
 
 def higher_first_share(pos, price):
@@ -246,45 +258,53 @@ def higher_first_share(pos, price):
     pos, price = np.asarray(pos), np.asarray(price, dtype=float)
     if len(pos) < 2:
         return float("nan"), 0
-    dp = np.sign(price[:, None] - price[None, :])
-    dx = np.sign(pos[None, :] - pos[:, None])  # +1 when i is earlier than j
-    iu = np.triu_indices(len(pos), 1)
-    dp, dx = dp[iu], dx[iu]
-    m = dp != 0
+    order = np.argsort(pos, kind="stable")
+    p = price[order]
+    dp = np.sign(p[:, None] - p[None, :])
+    iu = np.triu_indices(len(p), 1)
+    d = dp[iu]
+    m = d != 0
     n = int(m.sum())
-    if n == 0:
-        return float("nan"), 0
-    return float((dp[m] == dx[m]).mean()), n
+    return (float((d[m] > 0).mean()) if n else float("nan")), n
 
 
-def block_metrics(txs):
-    """One row per block: how the non-vote transactions are ordered."""
+def near_share(price, k: int = NEAR):
+    """Same as higher_first_share, only for pairs at most k positions apart."""
+    import numpy as np
+    p = np.asarray(price, dtype=float)
+    hit = tot = 0
+    for d in range(1, min(k, len(p) - 1) + 1):
+        a, b = p[:-d], p[d:]
+        m = a != b
+        hit += int((a[m] > b[m]).sum())
+        tot += int(m.sum())
+    return (hit / tot if tot else float("nan")), tot
+
+
+def block_metrics(tx):
+    """One row per block."""
     import numpy as np
     import pandas as pd
     out = []
-    for (sess, slot), g in txs.groupby(["session", "slot"], sort=False):
-        nv = g[g["vote"] == 0]
-        n = len(g)
-        rel = g["idx"] / max(n - 1, 1)
-        price = nv["cu_price"].fillna(0).to_numpy()
-        hf, npairs = higher_first_share(nv["idx"].to_numpy(), price)
-        tipped = nv[nv["tip"] > 0]
-        first_q = nv["idx"] < n * 0.25
-        paying = (price > 0).mean() if len(nv) else float("nan")
-        # Spearman rank correlation between position and price (negative = expensive first)
-        rho = float("nan")
-        if len(nv) > 2 and np.ptp(price) > 0:
-            rho = float(pd.Series(nv["idx"].to_numpy()).rank().corr(pd.Series(price).rank()))
+    for (sess, slot), g in tx.groupby(["session", "slot"], sort=False):
+        g = g.sort_values("idx")
+        price = g.price.to_numpy()
+        hf, npairs = higher_first_share(g.idx.to_numpy(), price)
+        nf, nnear = near_share(price)
+        top, rest = g[g.top], g[~g.top]
+        tipped = g[g.tip > 0]
         out.append({
-            "session": sess, "slot": slot, "client": g["client"].iat[0], "leader": g["leader"].iat[0],
-            "n_tx": n, "votes": int((g["vote"] == 1).sum()), "non_vote": len(nv),
-            "vote_mean_pos": float(rel[g["vote"] == 1].mean()) if (g["vote"] == 1).any() else float("nan"),
-            "paying_share": float(paying),
-            "higher_fee_first": hf, "fee_pairs": npairs, "spearman_pos_price": rho,
-            "tipped_share": float(len(tipped) / len(nv)) if len(nv) else float("nan"),
-            "tipped_in_first_quarter": float((tipped["idx"] < n * 0.25).mean()) if len(tipped) else float("nan"),
-            "first_quarter_paying": float((price[first_q.to_numpy()] > 0).mean()) if first_q.any() else float("nan"),
-            "failed_share": float(nv["err"].mean()) if len(nv) else float("nan"),
+            "session": sess, "slot": slot, "client": g.client.iat[0], "leader": g.leader.iat[0],
+            "n_tx": len(g), "paying_share": float((price > 0).mean()),
+            "top_share": float(g.top.mean()),
+            "higher_fee_first": hf, "fee_pairs": npairs,
+            "higher_fee_first_near": nf, "near_pairs": nnear,
+            "top_pos": float(top.rel.mean()) if len(top) else float("nan"),
+            "rest_pos": float(rest.rel.mean()) if len(rest) else float("nan"),
+            "top_shift": float(top.rel.mean() - rest.rel.mean()) if len(top) and len(rest) else float("nan"),
+            "tipped_share": float(len(tipped) / len(g)),
+            "tipped_pos": float(tipped.rel.mean()) if len(tipped) else float("nan"),
+            "failed_share": float(g.err.mean()),
         })
     return pd.DataFrame(out)
 
@@ -296,50 +316,61 @@ def cluster_ci(df, col, unit="leader", n_boot=2000, seed=20261103):
     if d.empty:
         return float("nan"), float("nan"), float("nan")
     groups = [g[col].to_numpy() for _, g in d.groupby(unit)]
-    rng = np.random.default_rng(seed)
     est = float(d[col].mean())
-    if len(groups) < 2:
+    if len(groups) < 3:
         return est, float("nan"), float("nan")
-    boots = []
-    for _ in range(n_boot):
-        pick = rng.integers(0, len(groups), len(groups))
-        boots.append(np.concatenate([groups[i] for i in pick]).mean())
+    rng = np.random.default_rng(seed)
+    sums = np.array([g.sum() for g in groups]); cnts = np.array([len(g) for g in groups])
+    idx = rng.integers(0, len(groups), size=(n_boot, len(groups)))
+    boots = sums[idx].sum(axis=1) / cnts[idx].sum(axis=1)
     lo, hi = np.percentile(boots, [2.5, 97.5])
     return est, float(lo), float(hi)
 
 
-def fmt_ci(est, lo, hi):
+def fmt_ci(est, lo, hi, signed=False):
     import math
-    if math.isnan(est):
+    if est is None or math.isnan(est):
         return ""
+    f = "{:+.3f}" if signed else "{:.2f}"
     if math.isnan(lo):
-        return f"{est:.2f}"
-    return f"{est:.2f} ({lo:.2f}–{hi:.2f})"
+        return f.format(est)
+    return f"{f.format(est)} ({f.format(lo)} … {f.format(hi)})"
 
 
 def client_table(bm, probe_fee=None):
     import pandas as pd
     rows = []
     for client, g in bm.groupby("client"):
-        hf = cluster_ci(g, "higher_fee_first")
-        row = {
-            "client": client, "validators": g["leader"].nunique(), "blocks": len(g),
-            "median_tx": int(g["n_tx"].median()),
-            "vote_share": round(float((g["votes"] / g["n_tx"]).mean()), 2),
-            "paying_share": round(float(g["paying_share"].mean()), 2),
-            "higher_fee_first": fmt_ci(*hf),
-            "spearman_pos_price": round(float(g["spearman_pos_price"].mean()), 2),
-            "tipped_share": round(float(g["tipped_share"].mean()), 3),
-            "tips_in_first_quarter": round(float(g["tipped_in_first_quarter"].mean()), 2)
-                if g["tipped_in_first_quarter"].notna().any() else None,
-            "_hf": hf[0], "_lo": hf[1], "_hi": hf[2],
-        }
-        if probe_fee is not None and client in probe_fee:
-            row["probe_fee_agree"] = probe_fee[client]
-        rows.append(row)
-    t = pd.DataFrame(rows).sort_values("blocks", ascending=False)
-    allrow = cluster_ci(bm, "higher_fee_first")
-    return t, allrow
+        sh = cluster_ci(g, "top_shift")
+        nr = cluster_ci(g, "higher_fee_first_near")
+        rows.append({
+            "client": client, "validators": g.leader.nunique(), "blocks": len(g),
+            "median_tx": int(g.n_tx.median()),
+            "paying_share": round(float(g.paying_share.mean()), 2),
+            "failed_share": round(float(g.failed_share.mean()), 2),
+            "top_fee_position": round(float(g.top_pos.mean()), 3),
+            "top_fee_shift": fmt_ci(*sh, signed=True),
+            "higher_fee_first_all": round(float(g.higher_fee_first.mean()), 3),
+            "higher_fee_first_near": fmt_ci(*nr),
+            "jito_tipped_share": round(float(g.tipped_share.mean()), 3),
+            "probe_fee_agree": (probe_fee or {}).get(client, float("nan")),
+            "_shift": sh, "_near": nr,
+        })
+    return pd.DataFrame(rows).sort_values("blocks", ascending=False)
+
+
+def bucket_table(tx):
+    import pandas as pd
+    g = tx.groupby("bucket", observed=True)
+    t = pd.DataFrame({
+        "transactions": g.size(),
+        "share": (g.size() / len(tx)).round(3),
+        "mean_position": g.rel.mean().round(3),
+        "failed_share": g.err.mean().round(2),
+        "jito_tipped_share": g.tip.apply(lambda x: (x > 0).mean()).round(3),
+    })
+    t.index.name = "cu_price (micro-lamports)"
+    return t
 
 
 def probe_fee_by_client(data: Path, sessions):
@@ -361,67 +392,102 @@ def probe_fee_by_client(data: Path, sessions):
         return None
 
 
-def figure(t, allrow, out: Path):
+def _style(ax):
+    for s in ("top", "right"):
+        ax.spines[s].set_visible(False)
+    ax.spines["left"].set_color("#898781"); ax.spines["bottom"].set_color("#898781")
+    ax.tick_params(colors="#0b0b0b", labelsize=9)
+    ax.set_axisbelow(True)
+
+
+def figure(t, bt, out: Path):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     import numpy as np
-    d = t[(t["blocks"] >= 8) & (t["validators"] >= 3)].sort_values("_hf")
+    d = t[(t.blocks >= 8) & (t.validators >= 3)].copy()
     if d.empty:
         return
-    fig, ax = plt.subplots(figsize=(7.2, 0.42 * len(d) + 1.4), dpi=150)
+    d["s"] = [x[0] for x in d._near]
+    d = d.sort_values("s")
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(11, 0.45 * len(d) + 1.8), dpi=150,
+                                 gridspec_kw={"width_ratios": [1, 1.25]})
+    # left: where transactions sit, by price
+    y = np.arange(len(bt))
+    cols = ["#c3c2b7"] * (len(bt) - 2) + ["#2a78d6"] * 2
+    a1.hlines(y, 0.5, bt.mean_position, color=cols, lw=2.2)
+    a1.scatter(bt.mean_position, y, color=cols, s=40, zorder=3)
+    a1.axvline(0.5, color="#898781", lw=1, ls="--")
+    a1.set_yticks(y, [f"{i}  ({s:.0%})" for i, s in zip(bt.index, bt.share)])
+    a1.set_xlim(0.40, 0.58)
+    a1.set_xlabel("mean position in the block (0 = first, 1 = last; 0.5 = middle)", fontsize=9)
+    a1.set_title("Where do transactions sit, by fee?\ncompute-unit price in micro-lamports (share of all)",
+                 loc="left", fontsize=10, color="#0b0b0b")
+    a1.grid(axis="x", color="#e1e0d9", lw=0.8)
+    _style(a1)
+    # right: nearby pairs, whole blocks vs our probes
     y = np.arange(len(d))
-    lo = np.clip(d["_hf"] - d["_lo"], 0, None).fillna(0)
-    hi = np.clip(d["_hi"] - d["_hf"], 0, None).fillna(0)
-    ax.errorbar(d["_hf"], y, xerr=[lo, hi], fmt="o", color="#2a78d6", ecolor="#2a78d6",
-                elinewidth=1.4, capsize=0, ms=6, label="all transactions in the leader's blocks")
-    if "probe_fee_agree" in d:
-        ax.plot(d["probe_fee_agree"], y, "D", color="#eb6834", ms=5, label="our probe transactions")
-    ax.axvline(0.5, color="#898781", lw=1, ls="--")
-    ax.text(0.505, -0.45, "coin flip", color="#898781", fontsize=8, va="center")
-    ax.set_yticks(y, d["client"])
-    ax.set_xlim(0.3, 1.0)
-    ax.set_xlabel("pairs with different fees where the higher fee is placed first")
-    ax.set_title("Does the higher fee go first? Whole blocks vs our probes", loc="left",
-                 fontsize=11, color="#0b0b0b")
-    for s in ("top", "right"):
-        ax.spines[s].set_visible(False)
-    ax.grid(axis="x", color="#e1e0d9", lw=0.8)
-    ax.set_axisbelow(True)
-    ax.legend(frameon=False, fontsize=8, loc="lower right")
+    est = np.array([x[0] for x in d._near]); lo = np.array([x[1] for x in d._near]); hi = np.array([x[2] for x in d._near])
+    err = np.nan_to_num(np.vstack([np.clip(est - lo, 0, None), np.clip(hi - est, 0, None)]))
+    a2.errorbar(est, y, xerr=err, fmt="o", color="#2a78d6", ecolor="#2a78d6", elinewidth=1.4, capsize=0,
+                ms=6, label=f"all transactions, neighbours ≤{NEAR} apart")
+    if d.probe_fee_agree.notna().any():
+        a2.plot(d.probe_fee_agree, y, "D", color="#eb6834", ms=5, label="our probes, sent together")
+    a2.axvline(0.5, color="#898781", lw=1, ls="--")
+    a2.set_yticks(y, d.client)
+    a2.set_xlim(0.4, 0.85)
+    a2.set_xlabel("pairs with different fees where the higher fee comes first (0.5 = coin flip)", fontsize=9)
+    a2.set_title("Does the higher fee go first?\nwhole blocks vs our probes", loc="left", fontsize=10,
+                 color="#0b0b0b")
+    a2.grid(axis="x", color="#e1e0d9", lw=0.8)
+    a2.legend(frameon=False, fontsize=8, loc="upper center", bbox_to_anchor=(0.45, -0.13), ncol=2)
+    _style(a2)
     fig.tight_layout()
     fig.savefig(out / "whole_block_fee_order.png")
     plt.close(fig)
 
 
 def cmd_analyze(a) -> int:
-    import pandas as pd
     data, out = Path(a.data), Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
-    blocks, txs = load_blocks(data, a.sessions)
+    blocks, tx = load_blocks(data, a.sessions)
     if blocks.empty:
         print("no fullblocks files found; run `blocks.py fetch` first", file=sys.stderr)
         return 1
-    bm = block_metrics(txs)
+    bm = block_metrics(tx)
     bm.to_csv(out / "whole_blocks.csv", index=False)
     probe = probe_fee_by_client(data, a.sessions)
-    t, allrow = client_table(bm, probe)
+    t = client_table(bm, probe)
     show = t.drop(columns=[c for c in t.columns if c.startswith("_")])
     show.to_csv(out / "whole_blocks_by_client.csv", index=False)
-    by_sess = bm.groupby("session").agg(blocks=("slot", "size"), median_tx=("n_tx", "median"),
-                                        higher_fee_first=("higher_fee_first", "mean"),
-                                        paying_share=("paying_share", "mean")).round(2)
-    figure(t, allrow, out)
+    bt = bucket_table(tx)
+    bt.to_csv(out / "whole_blocks_by_price.csv")
+    by_sess = bm.groupby("session").agg(
+        blocks=("slot", "size"), median_tx=("n_tx", "median"), paying_share=("paying_share", "mean"),
+        failed_share=("failed_share", "mean"), top_fee_shift=("top_shift", "mean"),
+        higher_fee_first_near=("higher_fee_first_near", "mean")).round(3)
+    figure(t, bt, out)
+    sh, nr = cluster_ci(bm, "top_shift"), cluster_ci(bm, "higher_fee_first_near")
     md = [
         "# Whole blocks of the scheduled leaders", "",
-        f"{len(bm)} blocks from {bm['leader'].nunique()} validators and {bm['client'].nunique()} clients, "
-        f"{int(bm['n_tx'].sum())} transactions ({int(bm['non_vote'].sum())} non-vote).", "",
-        "`higher_fee_first`: among non-vote transactions in one block with different compute-unit "
-        "prices, the share of pairs where the higher price is placed earlier (0.5 = no relation). "
-        "Interval: 95%, resampling whole validators. `tips_in_first_quarter`: share of transactions "
-        "that pay a Jito tip that sit in the first quarter of the block.", "",
-        f"All clients: higher_fee_first = {fmt_ci(*allrow)}.", "",
-        show.to_markdown(index=False), "", "## By session", "", by_sess.to_markdown(), "",
+        f"{len(bm)} blocks from {bm.leader.nunique()} validators and {bm.client.nunique()} clients, "
+        f"{len(tx)} transactions. The RPC's full-block answer did not include vote transactions, so "
+        "everything below is about non-vote transactions only.", "",
+        "* `top_fee_shift`: mean position (0 = first, 1 = last) of transactions paying at least "
+        f"{TOP_PRICE:,} micro-lamports per compute unit, minus that of all other transactions in the "
+        "same block. Negative = expensive transactions sit earlier.",
+        f"* `higher_fee_first_near`: pairs at most {NEAR} positions apart with different prices; share where "
+        "the higher price comes first (0.5 = no relation). `higher_fee_first_all`: the same over all pairs "
+        "in the block.",
+        "* `probe_fee_agree`: the same share for our own probe transactions, which were sent together "
+        "(from `analyze.py`, same-block pairs, clients with at least 20 pairs).",
+        "* Intervals: 95%, resampling whole validators.", "",
+        f"All clients: top_fee_shift = {fmt_ci(*sh, signed=True)}, "
+        f"higher_fee_first_near = {fmt_ci(*nr)}, "
+        f"failed transactions {bm.failed_share.mean():.0%}, paying a priority fee {bm.paying_share.mean():.0%}.", "",
+        "## By client", "", show.to_markdown(index=False), "",
+        "## By compute-unit price", "", bt.to_markdown(), "",
+        "## By session", "", by_sess.to_markdown(), "",
     ]
     (out / "WHOLE_BLOCKS.md").write_text("\n".join(md), encoding="utf-8")
     print("\n".join(md))
