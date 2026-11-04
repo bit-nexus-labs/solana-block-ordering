@@ -1,0 +1,7 @@
+test,kind,windows,diff,lo,hi,source,confirmed
+"sessions 1-4, all paths (exploratory, where the idea came from)",exploratory,228,0.23,0.05,0.39,PREREGISTRATION.md,
+"pre-registration 1: session 5, public RPC (H1)",pre-registered,96,0.09,-0.11,0.29,"results-s5/phase_effect.csv, all clients",no
+"pre-registration 2: session 6, direct QUIC (H4)",pre-registered,44,0.38,-0.14,0.63,"results-s6/by_provider.csv, direct-quic",no
+"pre-registration 3: session 7, direct QUIC (H4)",pre-registered,187,0.35,0.15,0.53,"results-s7/by_provider.csv, direct-quic",yes
+"all sessions, direct QUIC",all data,347,0.37,0.23,0.5,"results/by_provider.csv, direct-quic",
+"all sessions, public RPC",all data,225,0.02,-0.12,0.15,"results/by_provider.csv, public",

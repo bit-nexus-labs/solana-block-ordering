@@ -1,5 +1,29 @@
 # Inside the Block: how Solana leaders order transactions
 
+[![ci](https://github.com/bit-nexus-labs/solana-block-ordering/actions/workflows/ci.yml/badge.svg)](https://github.com/bit-nexus-labs/solana-block-ordering/actions/workflows/ci.yml)
+
+**Result.** On mainnet after Alpenglow, no validator client orders our transactions by one strict
+rule: send order and priority fee both matter, with almost equal weight. What decides which wins is
+*when* the transactions reach the leader. A batch that is already waiting when the leader's window
+starts is sorted by fee (the higher fee wins 67% of conflicts); a batch that arrives during the
+window is mostly kept in arrival order (32%). This was **confirmed by a pre-registered test**
+(+0.35, 95% CI +0.15 … +0.53) after two earlier pre-registered tests that were not, all reported. It
+holds on the direct path to the leader; through a public RPC the timing is washed out. The order of
+the ~444,000 other transactions in the same leaders' blocks agrees: across a whole block the fee
+barely predicts position.
+
+![Three pre-registered tests](results/preregistered_tests.png)
+
+7 mainnet sessions · 607 leader windows · 174 validators · 10 clients · 6,132 of our own
+transactions · 1,126 full blocks · three pre-registered tests · 0.021 SOL spent · every number
+rebuilt from the committed raw data. Full findings, dates and what went wrong: **[REPORT.md](REPORT.md)**.
+
+```bash
+docker compose run --rm analyze   # rebuilds results/ from the committed raw data in data/
+```
+
+---
+
 A measurement tool and study. We send our own small transactions into the leader windows of
 chosen mainnet validators, read the finished blocks back, and test for every validator which
 rule decided the order of *our* transactions: arrival time, priority fee, both, or neither.
@@ -13,15 +37,19 @@ code. We look only at outcomes we caused ourselves and can verify on chain.
 * `analysis/` — the Python analysis that turns raw logs into results.
 * `data/` — raw logs of every session (signatures, slots, timestamps). Committed.
 * `results/` — tables and figures generated from `data/`. Committed and reproducible.
+  `results-s5/`, `results-s6/`, `results-s7/` — the three pre-registered tests;
+  `results-blocks/` — the whole-block view.
 * [`REPORT.md`](REPORT.md) — findings, dates of every measurement, what went wrong.
+* [`PREREGISTRATION.md`](PREREGISTRATION.md), [`PREREGISTRATION_2.md`](PREREGISTRATION_2.md),
+  [`PREREGISTRATION_3.md`](PREREGISTRATION_3.md) — the three tests, each committed before its session ran.
 
 ## Quick start (one command per step)
 
 Requirements: Docker with Compose. Nothing else.
 
 ```bash
-cp .env.example .env              # set RPC_URL (a mainnet RPC for real runs)
 docker compose run --rm analyze   # rebuild results/ from the committed data/  <- judges start here
+cp .env.example .env              # only for measuring: set RPC_URL (a mainnet RPC for real runs)
 ```
 
 To measure yourself:
@@ -80,6 +108,7 @@ Safety rules built into the tool:
 | path | **rpc** (`sendTransaction`, `skipPreflight`, `maxRetries 0`) / **tpu** (QUIC to the leader's `tpuQuic`, unstaked) | the route changes arrival order and timing |
 | spacing | **2 ms** / **25 ms** | short gaps test batching inside the scheduler, long gaps test streaming |
 | phase | **pre** (arrives just before the window) / **inside** (arrives about one slot in) | before the window the leader can see the whole batch at once; inside it, transactions reach the scheduler one by one |
+| RPC provider | drawn per `rpc` window from `--extra-send-rpc-env` (session 6: public, RPC Fast, Digital Energy) | providers forward differently; drawing per window keeps hours and leaders equal |
 
 Assignment is random per window and independent of who the leader is, so arm effects and leader
 effects are not confounded.
@@ -106,12 +135,14 @@ and tips are out of scope and never used.
 the accounts they lock. The `shared` arm makes them conflict on purpose (same writable fee payer);
 the `independent` arm removes every conflict. Results are reported per arm.
 
-**Competition within the block.** Other users' transactions are in the same blocks. We do not
-interpret their order (we do not know when they arrived). We use the block only as the ruler that
+**Competition within the block.** Other users' transactions are in the same blocks. For the main
+result we do not interpret their order (we do not know when they arrived). We use the block only as the ruler that
 gives our transactions' positions, and we record the block size so busy and quiet blocks can be
 compared. Pairs of our transactions that ended up in *different* blocks of the window are kept
 apart from pairs in the *same* block: "sent later, so landed a slot later" is timing, not a
-scheduling decision.
+scheduling decision. As supplementary evidence only, `analysis/blocks.py` reads full blocks of the
+same leaders and measures how fee and position relate across all their non-vote transactions
+(`results-blocks/`).
 
 **Send order.** Recorded per transaction with a nanosecond wall-clock timestamp and the planned
 rank. Because fee level and send rank are independent random draws, a leader that sorts by fee
@@ -167,3 +198,5 @@ install the latest `numpy pandas matplotlib tabulate pytest` instead of the pinn
 | `src/collect.rs` | landing slot, block position, block producer |
 | `analysis/analyze.py` | pairs, intervals, verdicts, figures |
 | `analysis/test_analyze.py` | the analysis recovers known rules from synthetic data |
+| `analysis/tests_summary.py` | the three pre-registered tests in one table and figure, read from `results-s5/6/7` |
+| `analysis/blocks.py` | whole-block view: fetch full blocks of the same leaders (read only) and measure fee vs position |
