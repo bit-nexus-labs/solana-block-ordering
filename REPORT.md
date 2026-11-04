@@ -139,6 +139,30 @@ direct QUIC in quieter hours (sessions 1–3 and 7, median 227–333 transaction
 (+0.20 … +0.52), in US market hours (sessions 4–6, 427–529) +0.45 (+0.23 … +0.63). The earlier
 difference came from the mix of paths.
 
+### 7. When exactly does the fee decide? (exploratory, not pre-registered)
+
+Two cuts of the same pairs point at the mechanism.
+
+| our transactions | batch | conflicts won by the higher fee (95% CI) |
+|---|---|---|
+| lock one shared account (same fee payer) | before the window | **0.64 (0.55–0.72)** |
+| touch no common account (eight payers) | before the window | 0.43 (0.32–0.53) |
+| lock one shared account | inside the window | 0.36 (0.28–0.45) |
+| touch no common account | inside the window | 0.31 (0.23–0.40) |
+
+The fee wins clearly only when the transactions **both wait together and lock the same account**.
+Transactions that do not conflict are not sorted by fee even when they wait together. This is what
+a scheduler would produce that orders *conflicting* transactions by priority and runs independent
+ones in parallel, so their order in the block is an interleaving; we see the outcome, not the code.
+
+Arrival order has a time resolution. Pairs sent less than ~16 ms apart are close to a coin flip;
+inside the window, pairs sent more than 32 ms apart are kept in send order in 90–95% of cases when
+they share an account (83–89% when they do not), close to our "strict" threshold. Before the window
+the same gaps give only 58–79%, because the waiting batch is reordered.
+([`results/mechanism.png`](results/mechanism.png), `analysis/mechanism.py`)
+
+![Mechanism](results/mechanism.png)
+
 ## Two windows, step by step
 
 Both can be checked on any explorer: the signatures are in `data/` and below.
@@ -321,6 +345,7 @@ python analysis/analyze.py --data data --out results-s5 --sessions 20261103T1530
 python analysis/analyze.py --data data --out results-s6 --sessions 20261103T192233Z-live
 python analysis/analyze.py --data data --out results-s7 --sessions 20261104T080046Z-live
 python analysis/tests_summary.py                       # results/preregistered_tests.png
+python analysis/mechanism.py --data data --out results # results/mechanism.png (exploratory)
 python analysis/blocks.py analyze --data data --out results-blocks   # uses the committed full blocks
 ```
 

@@ -160,6 +160,9 @@ def main() -> int:
     a.out.parent.mkdir(parents=True, exist_ok=True)
     a.out.write_text(html, encoding="utf-8")
     (a.out.parent / ".nojekyll").write_text("", encoding="utf-8")
+    img = a.root / "results" / "mechanism.png"
+    if img.exists():
+        (a.out.parent / "mechanism.png").write_bytes(img.read_bytes())
     t = data["totals"]
     print(f"wrote {a.out} ({len(html) // 1024} KB): {t['sessions']} sessions, {t['windows']} windows, "
           f"{t['sent']} transactions")

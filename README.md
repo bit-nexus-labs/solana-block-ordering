@@ -10,7 +10,9 @@ window is mostly kept in arrival order (32%). This was **confirmed by a pre-regi
 (+0.35, 95% CI +0.15 … +0.53) after two earlier pre-registered tests that were not, all reported. It
 holds on the direct path to the leader; through a public RPC the timing is washed out. The order of
 the ~444,000 other transactions in the same leaders' blocks agrees: across a whole block the fee
-barely predicts position.
+barely predicts position. Exploratory: the fee decides only when our transactions both wait together
+*and* lock the same account; inside the window, transactions sent more than ~30 ms apart keep their
+send order in 90–95% of cases.
 
 ![Three pre-registered tests](results/preregistered_tests.png)
 
@@ -204,4 +206,5 @@ install the latest `numpy pandas matplotlib tabulate pytest` instead of the pinn
 | `analysis/tests_summary.py` | the three pre-registered tests in one table and figure, read from `results-s5/6/7` |
 | `analysis/verify_window.py` | check any window against the chain with a public RPC (no key, standard library only) |
 | `analysis/build_site.py`, `site_template.html` | build the interactive page `docs/index.html` from data and results |
+| `analysis/mechanism.py` | exploratory: contention × phase, and arrival order by send gap |
 | `analysis/blocks.py` | whole-block view: fetch full blocks of the same leaders (read only) and measure fee vs position |

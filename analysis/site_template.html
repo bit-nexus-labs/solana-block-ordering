@@ -106,7 +106,7 @@ footer { padding: 30px 0 60px; color: var(--muted); font-size: 13px; border-top:
 <header class="top"><div class="wrap">
   <div class="brand">Inside the Block <span>· how Solana leaders order transactions</span></div>
   <div class="right"><nav>
-    <a href="#tests">Tests</a><a href="#clients">Clients</a><a href="#explorer">Window explorer</a><a href="#path">Path</a><a href="#blocks">Whole blocks</a><a href="#verify">Verify</a>
+    <a href="#tests">Tests</a><a href="#clients">Clients</a><a href="#explorer">Window explorer</a><a href="#mechanism">Mechanism</a><a href="#path">Path</a><a href="#blocks">Whole blocks</a><a href="#verify">Verify</a>
     <a href="https://github.com/bit-nexus-labs/solana-block-ordering">GitHub</a></nav><button class="themebtn" id="theme" type="button">Theme</button></div>
 </div></header>
 
@@ -153,6 +153,12 @@ footer { padding: 30px 0 60px; color: var(--muted); font-size: 13px; border-top:
   <div class="kpis" id="w-kpis"></div>
   <div class="legend"><span><i style="background:var(--f0)"></i>0</span><span><i style="background:var(--f1)"></i>1,000</span><span><i style="background:var(--f2)"></i>10,000</span><span><i style="background:var(--f3)"></i>100,000</span><span><i style="background:var(--f4)"></i>1,000,000</span><span><i style="background:var(--f5)"></i>5,000,000 µlamports/CU</span></div>
   <pre id="w-cmd"></pre><div id="w-links" style="font-size:13px"></div></div>
+</section>
+
+<section id="mechanism">
+  <h2>When exactly does the fee decide?</h2>
+  <p class="sub">Exploratory, not pre-registered. The fee wins clearly only when our transactions both wait together and lock the same account; independent transactions are not sorted by fee even when they wait. Arrival order has a time resolution: inside the window, transactions sent more than ~30 ms apart keep their send order in 90–95% of cases.</p>
+  <div class="card"><img src="mechanism.png" alt="Fee wins by contention and phase; send-order share by send gap" style="width:100%;height:auto;display:block;border-radius:6px;background:#fff"></div>
 </section>
 
 <section id="path">
