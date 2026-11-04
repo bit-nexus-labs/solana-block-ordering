@@ -51,6 +51,48 @@ def tables(pairs: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     return cp, pd.DataFrame(rows)
 
 
+def fee_distance(sends: pd.DataFrame, wins: pd.DataFrame) -> pd.DataFrame:
+    """Same-block pairs with different fees: share where the higher fee is first, by how many of the
+    six levels (0, 1k, 10k, 100k, 1M, 5M µlamports/CU) apart the two fees are."""
+    s = sends[(sends.landed == True) & sends.index_in_block.notna()]  # noqa: E712
+    s = s.drop(columns=[c for c in ("leader", "phase", "contention") if c in s.columns]).merge(
+        wins[["session", "window_id", "leader", "phase", "contention"]], on=["session", "window_id"])
+    s = s[s.block_producer == s.leader]
+    rows = []
+    for (sess, wid, slot), g in s.groupby(["session", "window_id", "slot"]):
+        g = g.sort_values("index_in_block").to_dict("records")
+        for i in range(len(g)):
+            for j in range(i + 1, len(g)):
+                a, b = g[i], g[j]
+                if a["fee_level"] != b["fee_level"]:
+                    rows.append({"session": sess, "window_id": wid, "phase": a["phase"], "contention": a["contention"],
+                                 "levels_apart": abs(a["fee_level"] - b["fee_level"]),
+                                 "fee_first": a["fee_level"] > b["fee_level"]})
+    p = pd.DataFrame(rows)
+    out = []
+    for key, g0 in [(("all", "all"), p)] + list(p.groupby(["phase", "contention"])):
+        for lv, g in g0.groupby("levels_apart"):
+            sh, lo, hi = A.cluster_share(g, g.fee_first)
+            out.append({"phase": key[0], "contention": key[1], "levels_apart": int(lv),
+                        "pairs": len(g), "higher_fee_first": sh, "lo": lo, "hi": hi})
+    return pd.DataFrame(out)
+
+
+def block_position(sends: pd.DataFrame, wins: pd.DataFrame) -> pd.DataFrame:
+    """Where our transactions sit in the scheduled leader's blocks (0 = first, 1 = last) and in which
+    slot of the 4-slot window they landed."""
+    s = sends[(sends.landed == True) & sends.index_in_block.notna()]  # noqa: E712
+    s = s.drop(columns=[c for c in ("leader", "phase", "path", "first_slot") if c in s.columns]).merge(
+        wins[["session", "window_id", "leader", "phase", "path", "first_slot"]], on=["session", "window_id"])
+    s = s[s.block_producer == s.leader].copy()
+    s["rel"] = s.index_in_block / s.block_tx_count.clip(lower=1)
+    s["first_slot_of_window"] = (s.slot == s.first_slot)
+    g = s.groupby(["path", "phase"])
+    return pd.DataFrame({"transactions": g.size(), "position_p25": g.rel.quantile(0.25),
+                         "position_median": g.rel.median(), "position_p75": g.rel.quantile(0.75),
+                         "in_first_slot_of_window": g.first_slot_of_window.mean()}).reset_index()
+
+
 def figure(cp: pd.DataFrame, gp: pd.DataFrame, out: Path) -> None:
     import matplotlib
     matplotlib.use("Agg")
@@ -104,15 +146,22 @@ def main() -> int:
     ap.add_argument("--out", type=Path, default=Path("results"))
     a = ap.parse_args()
     sends, windows, _, _ = A.load_sessions(sorted(p for p in a.data.iterdir() if p.is_dir()))
-    _, pairs = A.window_rows(sends, windows)
+    wins, pairs = A.window_rows(sends, windows)
     cp, gp = tables(pairs)
+    fd, bp = fee_distance(sends, wins), block_position(sends, wins)
     a.out.mkdir(parents=True, exist_ok=True)
     cp.round(3).to_csv(a.out / "mechanism_contention_phase.csv", index=False)
     gp.round(3).to_csv(a.out / "mechanism_send_gap.csv", index=False)
+    fd.round(3).to_csv(a.out / "mechanism_fee_distance.csv", index=False)
+    bp.round(3).to_csv(a.out / "mechanism_block_position.csv", index=False)
     figure(cp, gp, a.out)
     print(cp.round(2).to_markdown(index=False))
     print()
     print(gp.round(2).to_markdown(index=False))
+    print()
+    print(fd.round(2).to_markdown(index=False))
+    print()
+    print(bp.round(2).to_markdown(index=False))
     return 0
 
 

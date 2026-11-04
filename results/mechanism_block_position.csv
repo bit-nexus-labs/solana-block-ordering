@@ -1,0 +1,5 @@
+path,phase,transactions,position_p25,position_median,position_p75,in_first_slot_of_window
+rpc,inside,772,0.219,0.481,0.737,0.219
+rpc,pre,551,0.112,0.407,0.644,0.65
+tpu,inside,591,0.14,0.399,0.668,0.379
+tpu,pre,736,0.055,0.115,0.229,0.913

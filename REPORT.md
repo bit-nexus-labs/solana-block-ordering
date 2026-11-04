@@ -161,6 +161,17 @@ they share an account (83–89% when they do not), close to our "strict" thresho
 the same gaps give only 58–79%, because the waiting batch is reordered.
 ([`results/mechanism.png`](results/mechanism.png), `analysis/mechanism.py`)
 
+**The fee acts as a rank, not as a bid size.** When our transactions wait together on one shared
+account, a fee one level higher (for example 10,000 against 1,000 µlamports/CU) already wins 75%
+(70–79%) of pairs; two levels 77%, three to five levels 81%. Paying a thousand times more than the
+neighbour buys little over paying ten times more. ([`results/mechanism_fee_distance.csv`](results/mechanism_fee_distance.csv))
+
+**A waiting batch lands at the top of the block.** Sent over direct QUIC to arrive before the
+window, 91% of our transactions landed in the leader's first slot and half of them in the first 11%
+of that block (quartiles 6%–23%). Sent to arrive inside the window, the median position was 40% of
+the block; through the public RPC, 41–48%.
+([`results/mechanism_block_position.csv`](results/mechanism_block_position.csv))
+
 ![Mechanism](results/mechanism.png)
 
 ## Two windows, step by step

@@ -157,7 +157,7 @@ footer { padding: 30px 0 60px; color: var(--muted); font-size: 13px; border-top:
 
 <section id="mechanism">
   <h2>When exactly does the fee decide?</h2>
-  <p class="sub">Exploratory, not pre-registered. The fee wins clearly only when our transactions both wait together and lock the same account; independent transactions are not sorted by fee even when they wait. Arrival order has a time resolution: inside the window, transactions sent more than ~30 ms apart keep their send order in 90–95% of cases.</p>
+  <p class="sub">Exploratory, not pre-registered. The fee wins clearly only when our transactions both wait together and lock the same account; independent transactions are not sorted by fee even when they wait. Arrival order has a time resolution: inside the window, transactions sent more than ~30 ms apart keep their send order in 90–95% of cases. The fee acts as a rank, not as a bid size: one fee level above the neighbour already wins 75% of such pairs, five levels 81%. And a batch that waits for the window lands at the top of the block: over direct QUIC, 91% in the leader's first slot, half of it in the first 11% of the block.</p>
   <div class="card"><img src="mechanism.png" alt="Fee wins by contention and phase; send-order share by send gap" style="width:100%;height:auto;display:block;border-radius:6px;background:#fff"></div>
 </section>
 
