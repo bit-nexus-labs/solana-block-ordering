@@ -573,6 +573,10 @@ def main() -> int:
     pe = phase_effect_table(pairs)
     pe.to_csv(args.out / "phase_effect.csv", index=False)
     phase_figure(pe, args.out)
+    # by client and version string (computed last so the numbers above do not change)
+    pv = pairs.merge(wins[["session", "window_id", "version"]], on=["session", "window_id"], how="left")
+    by_version = pooled(pv, wins, ["client", "version"])
+    by_version.to_csv(args.out / "by_client_version.csv", index=False)
 
     cols = ["client", "validators", "windows", "pairs", "fee_agree", "fee_agree_lo", "fee_agree_hi",
             "arrival_agree", "arrival_agree_lo", "arrival_agree_hi", "conflict_pairs", "fee_wins_conflicts",
@@ -582,6 +586,7 @@ def main() -> int:
     vcols = ["client", "leader", "windows", "pairs", "fee_agree", "arrival_agree", "fee_wins_conflicts", "verdict"]
     md += "\n## By validator\n\n" + markdown_table(by_validator, [c for c in vcols if c in by_validator.columns])
     acols = ["client", "contention", "spacing_ms", "pairs", "fee_agree", "arrival_agree", "verdict"]
+    md += "\n## By client and version\n\n" + markdown_table(by_version, [c for c in vcols if c != "leader"] [:1] + ["version"] + [c for c in vcols if c not in ("client", "leader")])
     md += "\n## By client and arm\n\n" + markdown_table(by_arm, [c for c in acols if c in by_arm.columns])
     pcols = ["client", "phase", "pairs", "fee_agree", "arrival_agree", "fee_wins_conflicts", "verdict"]
     md += "\n## By client and phase\n\n" + markdown_table(by_phase, [c for c in pcols if c in by_phase.columns])

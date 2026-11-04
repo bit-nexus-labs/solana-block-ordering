@@ -144,6 +144,32 @@ Same-block pairs of our own transactions in the scheduled leader's blocks.
 | Rakurai | ana2y2YvQ3ZPMwm6qhnN3nJoUSiT3qx5Pvetkq9xcfY | 13 | 243 | 0.76 | 0.70 | 0.57 | mixed (both matter) |
 | Unknown | Diman2GphWLwECE3swjrAEAJniezpYLxK1edUydiDZau | 6 | 21 | 0.30 | 1.00 | 0.00 | insufficient data |
 
+## By client and version
+
+| client | version | windows | pairs | fee_agree | arrival_agree | fee_wins_conflicts | verdict |
+|---|---|---|---|---|---|---|---|
+| Agave | 4.3.2 | 24 | 300 | 0.46 | 0.69 | 0.23 | arrival (loose) |
+| Agave | 4.4.0 | 27 | 301 | 0.61 | 0.84 | 0.28 | arrival (loose) |
+| Agave | 4.5.0-alpha.4 | 18 | 57 | 0.55 | 0.46 | 0.59 | insufficient data |
+| AgaveBam | 4.3.2 | 14 | 236 | 0.83 | 0.55 | 0.74 | priority (loose) |
+| AgaveBam | 4.4.0 | 50 | 714 | 0.69 | 0.75 | 0.43 | mixed (both matter) |
+| AgaveBam | 4.4.0-rc.1 | 11 | 117 | 0.89 | 0.47 | 0.85 | priority (loose) |
+| FireBAM | 26.10.5 | 74 | 595 | 0.74 | 0.68 | 0.51 | mixed (both matter) |
+| Firedancer | 0.1.1 | 9 | 99 | 0.89 | 0.71 | 0.81 | priority (loose) |
+| Firedancer | 26.10.4 | 16 | 203 | 0.54 | 0.85 | 0.17 | arrival (loose) |
+| Firedancer | 26.10.5 | 51 | 730 | 0.75 | 0.72 | 0.50 | mixed (both matter) |
+| HarmonicAgave | 4.3.2 | 19 | 528 | 0.74 | 0.69 | 0.57 | mixed (both matter) |
+| HarmonicAgave | 4.4.0 | 50 | 859 | 0.68 | 0.67 | 0.50 | mixed (both matter) |
+| HarmonicAgave | 4.4.0-rc.1 | 7 | 201 | 0.65 | 0.79 | 0.36 | mixed (both matter) |
+| HarmonicFiredancer | 26.10.4 | 6 | 109 | 0.56 | 0.74 | 0.31 | arrival (loose) |
+| HarmonicFiredancer | 26.10.5 | 70 | 1311 | 0.65 | 0.70 | 0.46 | mixed (both matter) |
+| JitoLabs | 4.3.2 | 15 | 227 | 0.69 | 0.66 | 0.58 | no detectable rule |
+| JitoLabs | 4.4.0 | 59 | 856 | 0.60 | 0.65 | 0.48 | arrival (loose) |
+| Raiku | 4.4.0 | 7 | 6 | 1.00 | 0.67 | 1.00 | insufficient data |
+| Rakurai | 4.3.2 | 37 | 430 | 0.61 | 0.74 | 0.36 | mixed (both matter) |
+| Rakurai | 4.4.0 | 32 | 537 | 0.74 | 0.66 | 0.61 | mixed (both matter) |
+| Unknown | 4.4.0 | 6 | 21 | 0.30 | 1.00 | 0.00 | insufficient data |
+
 ## By client and arm
 
 | client | contention | spacing_ms | pairs | fee_agree | arrival_agree | verdict |

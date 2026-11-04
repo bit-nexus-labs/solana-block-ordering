@@ -6,7 +6,8 @@ mixed in. **Mainnet data:** 7 sessions, 607 leader windows of 174 validators run
 6,132 of our own transactions, 3,595 landed (2,650 in the scheduled leader's own blocks).
 **Cost:** 0.0209 SOL in fees for the whole study (budget about 0.05 SOL; the spend cap in the code is
 0.045 SOL counted on the *maximum possible* fee). Every number below is rebuilt from `data/` by the
-commands in [Reproduce](#reproduce).
+commands in [Reproduce](#reproduce). Interactive version with a window explorer:
+https://bit-nexus-labs.github.io/solana-block-ordering/
 
 ## The answer in one paragraph
 
@@ -52,6 +53,12 @@ fewer than 95% of pairs; no client reached "strict". Vanilla **Agave** leans mos
 wins only 30% of conflicts); the BAM clients (**AgaveBam, FireBAM**) follow the fee most often (74%).
 Per validator: [`results/by_validator.csv`](results/by_validator.csv); per arm (contention ×
 spacing): [`results/by_client_arm.csv`](results/by_client_arm.csv).
+
+**By version string.** Within one client the version can matter: AgaveBam 4.3.2 and 4.4.0-rc.1
+follow the fee in 83% and 89% of pairs ("priority, loose"), AgaveBam 4.4.0 in 69% ("mixed");
+Firedancer 26.10.4 leans to arrival (fee wins 17% of conflicts), 26.10.5 is mixed (50%). These
+groups have 4–51 windows each and were not balanced over phase and path, so they are descriptive:
+[`results/by_client_version.csv`](results/by_client_version.csv).
 
 ![Rule map](results/rule_map_by_client.png)
 
@@ -315,6 +322,13 @@ python analysis/analyze.py --data data --out results-s6 --sessions 20261103T1922
 python analysis/analyze.py --data data --out results-s7 --sessions 20261104T080046Z-live
 python analysis/tests_summary.py                       # results/preregistered_tests.png
 python analysis/blocks.py analyze --data data --out results-blocks   # uses the committed full blocks
+```
+
+Check any single window against the chain (public RPC, no key, no SOL):
+
+```bash
+python analysis/verify_window.py --list --session 20261102T071208Z-live
+python analysis/verify_window.py --session 20261102T071208Z-live --window 16
 ```
 
 `blocks.py fetch` re-downloads the full blocks (read only, needs `RPC_URL`). The measurement itself

@@ -17,9 +17,12 @@ barely predicts position.
 7 mainnet sessions · 607 leader windows · 174 validators · 10 clients · 6,132 of our own
 transactions · 1,126 full blocks · three pre-registered tests · 0.021 SOL spent · every number
 rebuilt from the committed raw data. Full findings, dates and what went wrong: **[REPORT.md](REPORT.md)**.
+**Interactive page** with a window explorer (every window, every transaction, links to Solscan):
+**https://bit-nexus-labs.github.io/solana-block-ordering/**
 
 ```bash
 docker compose run --rm analyze   # rebuilds results/ from the committed raw data in data/
+python analysis/verify_window.py --session 20261102T071208Z-live --window 16   # check one window on chain, no key
 ```
 
 ---
@@ -199,4 +202,6 @@ install the latest `numpy pandas matplotlib tabulate pytest` instead of the pinn
 | `analysis/analyze.py` | pairs, intervals, verdicts, figures |
 | `analysis/test_analyze.py` | the analysis recovers known rules from synthetic data |
 | `analysis/tests_summary.py` | the three pre-registered tests in one table and figure, read from `results-s5/6/7` |
+| `analysis/verify_window.py` | check any window against the chain with a public RPC (no key, standard library only) |
+| `analysis/build_site.py`, `site_template.html` | build the interactive page `docs/index.html` from data and results |
 | `analysis/blocks.py` | whole-block view: fetch full blocks of the same leaders (read only) and measure fee vs position |

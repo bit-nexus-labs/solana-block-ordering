@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inside the Block</title>
+<meta name="description" content="A controlled mainnet experiment on how Solana leaders order transactions, with three pre-registered tests.">
+<style>
+:root {
+  color-scheme: light;
+  --bg: #fcfcfb; --card: #ffffff; --ink: #0b0b0b; --ink2: #52514e; --muted: #898781;
+  --line: #e1e0d9; --soft: #f0efec;
+  --blue: #2a78d6; --orange: #eb6834; --neutral: #c3c2b7;
+  --f0: #86b6ef; --f1: #5598e7; --f2: #2a78d6; --f3: #1c5cab; --f4: #104281; --f5: #0d366b;
+  --ok: #0ca30c; --no: #d03b3b;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #141413; --card: #1a1a19; --ink: #f0efec; --ink2: #c3c2b7; --muted: #8f8d86;
+    --line: #2f2f2c; --soft: #262624;
+    --blue: #3987e5; --orange: #d95926; --neutral: #5a5954;
+    --f0: #184f95; --f1: #1c5cab; --f2: #2a78d6; --f3: #3987e5; --f4: #6da7ec; --f5: #9ec5f4;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #141413; --card: #1a1a19; --ink: #f0efec; --ink2: #c3c2b7; --muted: #8f8d86;
+  --line: #2f2f2c; --soft: #262624;
+  --blue: #3987e5; --orange: #d95926; --neutral: #5a5954;
+  --f0: #184f95; --f1: #1c5cab; --f2: #2a78d6; --f3: #3987e5; --f4: #6da7ec; --f5: #9ec5f4;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+a { color: var(--blue); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+.wrap { max-width: 1040px; margin: 0 auto; padding: 0 16px; }
+header.top { border-bottom: 1px solid var(--line); }
+header.top .wrap { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding-top: 14px; padding-bottom: 14px; }
+.right { display: flex; align-items: center; }
+.brand { font-weight: 650; letter-spacing: -0.01em; }
+.brand span { color: var(--muted); font-weight: 450; }
+nav a { margin-left: 14px; white-space: nowrap; font-size: 14px; color: var(--ink2); text-decoration: none; }
+nav a:hover { color: var(--ink); }
+.hero { padding: 56px 0 28px; }
+.eyebrow { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 12px; }
+h1 { font-size: clamp(30px, 5vw, 48px); line-height: 1.08; letter-spacing: -0.025em; margin: 0 0 18px; max-width: 900px; font-weight: 700; }
+h1 em { font-style: normal; color: var(--blue); }
+.lede { font-size: 18px; color: var(--ink2); max-width: 760px; margin: 0; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 34px 0 0; }
+.stat { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+.stat b { display: block; font-size: 38px; line-height: 1.05; letter-spacing: -0.02em; }
+.stat b.pre { color: var(--orange); } .stat b.ins { color: var(--blue); }
+.stat span { font-size: 13px; color: var(--ink2); }
+.chips { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 22px 0 0; font-size: 14px; color: var(--ink2); }
+.chips b { color: var(--ink); font-variant-numeric: tabular-nums; }
+section { padding: 44px 0; border-top: 1px solid var(--line); }
+h2 { font-size: 26px; letter-spacing: -0.015em; margin: 0 0 8px; }
+.sub { color: var(--ink2); margin: 0 0 22px; max-width: 760px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px; min-width: 0; overflow-x: auto; }
+.card svg.wide { min-width: 860px; } .card svg.half { min-width: 440px; }
+.grid2 > * { min-width: 0; }
+svg text.halo { paint-order: stroke; stroke: var(--card); stroke-width: 5px; stroke-linejoin: round; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 760px) { .grid2 { grid-template-columns: 1fr; } nav { display: none; } .hero { padding-top: 34px; } }
+svg { display: block; width: 100%; height: auto; overflow: visible; }
+svg text { fill: var(--ink2); font: 12px system-ui, sans-serif; }
+svg .ink { fill: var(--ink); }
+svg .axis { stroke: var(--line); }
+svg .grid { stroke: var(--line); stroke-width: 1; }
+svg .zero { stroke: var(--muted); stroke-dasharray: 3 3; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--ink2); margin: 10px 0 0; }
+.legend i { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+.legend i.ring { background: transparent !important; border: 2px solid var(--blue); border-radius: 50%; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; margin: 0 0 14px; }
+.seg button { font: inherit; font-size: 14px; border: 0; background: transparent; color: var(--ink2); padding: 7px 14px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+.controls { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: flex-end; margin: 0 0 14px; }
+.controls label { display: flex; flex-direction: column; gap: 4px; min-width: 0; max-width: 100%; }
+.controls select { width: 100%; }
+select { font: inherit; font-size: 14px; color: var(--ink); background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; max-width: 100%; }
+label.small { font-size: 13px; color: var(--ink2); }
+table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); }
+th { color: var(--muted); font-weight: 550; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+td.r, th.r { text-align: right; }
+.tablewrap { overflow-x: auto; }
+.tag { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 99px; background: var(--soft); color: var(--ink2); white-space: nowrap; }
+.tag.yes { color: var(--ok); } .tag.no { color: var(--no); }
+.note { font-size: 13px; color: var(--muted); margin: 12px 0 0; }
+pre, code { font-family: var(--mono); font-size: 13px; }
+pre { background: var(--soft); border-radius: 8px; padding: 12px 14px; overflow-x: auto; margin: 10px 0; }
+.tip { position: fixed; pointer-events: none; background: var(--ink); color: var(--bg); font-size: 12.5px; line-height: 1.4; padding: 7px 9px; border-radius: 6px; max-width: 280px; opacity: 0; transition: opacity .08s; z-index: 10; }
+.kpis { display: flex; flex-wrap: wrap; gap: 8px 22px; font-size: 14px; color: var(--ink2); margin: 10px 0 0; }
+.kpis b { color: var(--ink); }
+.steps { counter-reset: s; list-style: none; padding: 0; margin: 0; }
+.steps li { counter-increment: s; padding: 0 0 14px 34px; position: relative; color: var(--ink2); }
+.steps li::before { content: counter(s); position: absolute; left: 0; top: 0; width: 22px; height: 22px; border-radius: 50%; background: var(--soft); color: var(--ink); font-size: 12px; display: grid; place-items: center; font-weight: 600; }
+.steps li b { color: var(--ink); }
+footer { padding: 30px 0 60px; color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); }
+.themebtn { font: inherit; font-size: 13px; background: transparent; border: 1px solid var(--line); color: var(--ink2); border-radius: 8px; padding: 4px 10px; cursor: pointer; margin-left: 16px; }
+</style>
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <div class="brand">Inside the Block <span>· how Solana leaders order transactions</span></div>
+  <div class="right"><nav>
+    <a href="#tests">Tests</a><a href="#clients">Clients</a><a href="#explorer">Window explorer</a><a href="#path">Path</a><a href="#blocks">Whole blocks</a><a href="#verify">Verify</a>
+    <a href="https://github.com/bit-nexus-labs/solana-block-ordering">GitHub</a></nav><button class="themebtn" id="theme" type="button">Theme</button></div>
+</div></header>
+
+<main class="wrap">
+<div class="hero">
+  <p class="eyebrow">Controlled experiment · Solana mainnet · after Alpenglow · 2–4 November 2026</p>
+  <h1>Before the leader's window, the <em style="color:var(--orange)">fee</em> decides. Inside it, <em>arrival</em> does.</h1>
+  <p class="lede">We sent our own transactions, with random fees in a random send order, into the leader windows of mainnet validators and read the blocks back. No client follows one strict rule. Which rule wins depends on when the batch reaches the leader, and that was confirmed by a pre-registered test.</p>
+  <div class="stats">
+    <div class="stat"><b class="pre" id="k-pre">–</b><span>conflicts won by the higher fee when the batch waits for the window</span></div>
+    <div class="stat"><b class="ins" id="k-ins">–</b><span>…when the batch arrives during the window</span></div>
+    <div class="stat"><b id="k-diff">–</b><span>pre-registered test 3, difference (95% CI)</span></div>
+  </div>
+  <div class="chips" id="chips"></div>
+</div>
+
+<section id="tests">
+  <h2>Three pre-registered tests, all reported</h2>
+  <p class="sub">Each test was committed to the repository before its session ran. The first used only a public RPC and was not confirmed; splitting by path showed why. The second had too few direct windows. The third, sized in advance, confirmed the effect on the direct path.</p>
+  <div class="card"><svg class="wide" id="c-tests" role="img" aria-label="Forest plot of the three pre-registered tests"></svg>
+  <div class="legend"><span><i style="background:var(--neutral)"></i>exploratory</span><span><i style="background:var(--blue)"></i>pre-registered (hollow = not confirmed)</span><span><i style="background:var(--orange)"></i>all sessions together</span></div></div>
+  <div class="tablewrap"><table style="margin-top:14px"><thead><tr><th>file</th><th>committed</th><th>commit</th></tr></thead><tbody id="t-prereg"></tbody></table></div>
+</section>
+
+<section id="clients">
+  <h2>Every client: both rules matter, timing tips the balance</h2>
+  <p class="sub">Share of our same-block pairs placed in send order and in fee order, with 95% intervals (whole windows resampled). Switch the phase to see the same clients before and during the window.</p>
+  <div class="seg" role="group" aria-label="Phase"><button data-ph="all" aria-pressed="true">All windows</button><button data-ph="pre" aria-pressed="false">Batch before the window</button><button data-ph="inside" aria-pressed="false">Batch inside the window</button></div>
+  <div class="card"><svg class="wide" id="c-clients" role="img" aria-label="Rule shares per client"></svg>
+  <div class="legend"><span><i style="background:var(--neutral)"></i>follows send order</span><span><i style="background:var(--orange)"></i>follows the fee</span><span>dashed line: coin flip (0.5)</span></div></div>
+  <div class="tablewrap"><table style="margin-top:14px"><thead><tr><th>client</th><th class="r">validators</th><th class="r">windows</th><th class="r">pairs</th><th class="r">send order</th><th class="r">fee</th><th class="r">fee wins conflicts</th><th>verdict</th></tr></thead><tbody id="t-clients"></tbody></table></div>
+</section>
+
+<section id="explorer">
+  <h2>Window explorer: every window, every transaction</h2>
+  <p class="sub">Pick any of the measured windows. Columns are our transactions in the order the leader put them; bar height is the fee, the label is the order we sent them in. A staircase means "sorted by fee"; labels 1, 2, 3… mean "kept in send order".</p>
+  <div class="controls">
+    <label class="small">Session <select id="s-sess"></select></label>
+    <label class="small">Client <select id="s-client"></select></label>
+    <label class="small">Phase <select id="s-phase"><option value="">any</option><option value="pre">before the window</option><option value="inside">inside the window</option></select></label>
+    <label class="small">Window <select id="s-win"></select></label>
+  </div>
+  <div class="card"><div id="w-head" style="font-size:14px;color:var(--ink2);margin-bottom:8px"></div><svg class="wide" id="c-window" role="img" aria-label="Transactions of the selected window in block order"></svg>
+  <div class="kpis" id="w-kpis"></div>
+  <div class="legend"><span><i style="background:var(--f0)"></i>0</span><span><i style="background:var(--f1)"></i>1,000</span><span><i style="background:var(--f2)"></i>10,000</span><span><i style="background:var(--f3)"></i>100,000</span><span><i style="background:var(--f4)"></i>1,000,000</span><span><i style="background:var(--f5)"></i>5,000,000 µlamports/CU</span></div>
+  <pre id="w-cmd"></pre><div id="w-links" style="font-size:13px"></div></div>
+</section>
+
+<section id="path">
+  <h2>The path decides whether timing matters</h2>
+  <p class="sub">Direct unstaked QUIC loses more than half of each batch, but what arrives, arrives when we chose. A public RPC delivers more, yet forwards to several leaders on its own schedule, and the timing effect disappears.</p>
+  <div class="grid2">
+    <div class="card"><svg class="half" id="c-path" role="img" aria-label="Where our transactions landed, by path"></svg>
+      <div class="legend"><span><i style="background:var(--blue)"></i>scheduled leader's block</span><span><i style="background:var(--orange)"></i>another leader's block</span><span><i style="background:var(--neutral)"></i>never landed</span></div></div>
+    <div class="card"><svg class="half" id="c-pathfx" role="img" aria-label="Timing effect by path"></svg>
+      <p class="note">Conflicts won by the fee, before minus inside the window, 95% CI, all sessions.</p></div>
+  </div>
+  <h3 style="margin:28px 0 6px;font-size:18px">RPC providers in one session</h3>
+  <p class="sub" style="margin-bottom:12px">In session 6 every RPC window drew its provider at random, so they saw the same hours and leaders. 16–19 windows each: a description, not a ranking.</p>
+  <div class="tablewrap"><table><thead><tr><th>path</th><th class="r">windows</th><th class="r">scheduled leader</th><th class="r">another leader</th><th class="r">never landed</th><th class="r">median delay (slots)</th></tr></thead><tbody id="t-prov"></tbody></table></div>
+</section>
+
+<section id="blocks">
+  <h2>Whole blocks agree (supplementary)</h2>
+  <p class="sub" id="blk-sub"></p>
+  <div class="grid2">
+    <div class="card"><svg class="half" id="c-price" role="img" aria-label="Mean position in block by fee level"></svg><p class="note">Mean position in the block (0 = first, 1 = last) by compute-unit price, µlamports. Share of all transactions in brackets.</p></div>
+    <div class="card"><svg class="half" id="c-near" role="img" aria-label="Higher fee first, whole blocks vs our probes"></svg>
+      <div class="legend"><span><i style="background:var(--blue)"></i>all transactions, neighbours ≤ 10 apart</span><span><i style="background:var(--orange)"></i>our probes, sent together</span></div></div>
+  </div>
+</section>
+
+<section id="verify">
+  <h2>Check it yourself</h2>
+  <ol class="steps">
+    <li><b>Rebuild every number</b> from the committed raw data (signatures, slots, timestamps):<pre>git clone https://github.com/bit-nexus-labs/solana-block-ordering && cd solana-block-ordering
+docker compose run --rm analyze</pre></li>
+    <li><b>Check any window against the chain</b> with a public RPC, no key, no SOL:<pre>python analysis/verify_window.py --session 20261102T071208Z-live --window 16</pre></li>
+    <li><b>Run the probe yourself.</b> Dry run by default; real sending only with <code>--live</code>, stopped by a spend cap enforced in code. The whole study cost 0.021 SOL.<pre>docker compose run --rm probe run</pre></li>
+  </ol>
+  <p class="note">Full method, every measurement date and what went wrong: <a href="https://github.com/bit-nexus-labs/solana-block-ordering/blob/main/REPORT.md">REPORT.md</a> · design and the required considerations: <a href="https://github.com/bit-nexus-labs/solana-block-ordering#readme">README</a>.</p>
+</section>
+</main>
+<footer><div class="wrap">Not separated: network jitter vs scheduler, provider internals, queue load, staked vs unstaked QUIC, local fee markets. Jito bundles and tips are out of scope. Every figure on this page is generated from the repository by <code>analysis/build_site.py</code>.</div></footer>
+<div class="tip" id="tip"></div>
+
+<script>
+const D = /*__DATA__*/null;
+const $ = s => document.querySelector(s);
+const NS = "http://www.w3.org/2000/svg";
+const fmt = (x, d = 2) => x == null ? "–" : (+x).toFixed(d);
+const pct = x => x == null ? "–" : Math.round(x * 100) + "%";
+const sgn = x => (x >= 0 ? "+" : "−") + Math.abs(x).toFixed(2);
+const tip = $("#tip");
+function showTip(e, html) { tip.innerHTML = html; tip.style.opacity = 1; const x = Math.min(e.clientX + 14, innerWidth - 290); tip.style.left = x + "px"; tip.style.top = (e.clientY + 14) + "px"; }
+function hideTip() { tip.style.opacity = 0; }
+function el(tag, attrs = {}, parent) { const n = document.createElementNS(NS, tag); for (const k in attrs) n.setAttribute(k, attrs[k]); if (parent) parent.appendChild(n); return n; }
+function txt(parent, x, y, s, attrs = {}) { const t = el("text", { x, y, ...attrs }, parent); t.textContent = s; return t; }
+function hover(node, html) { node.addEventListener("mousemove", e => showTip(e, html)); node.addEventListener("mouseleave", hideTip); node.style.cursor = "default"; }
+function clear(svg) { while (svg.firstChild) svg.removeChild(svg.firstChild); }
+const W = () => 980;
+
+// theme toggle
+(function () {
+  const r = document.documentElement; let saved = null;
+  try { saved = localStorage.getItem("theme"); } catch (e) {}
+  if (saved) r.setAttribute("data-theme", saved);
+  $("#theme").onclick = () => {
+    const dark = r.getAttribute("data-theme") ? r.getAttribute("data-theme") === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+    const next = dark ? "light" : "dark"; r.setAttribute("data-theme", next);
+    try { localStorage.setItem("theme", next); } catch (e) {}
+  };
+})();
+
+// hero
+(function () {
+  const t = D.totals;
+  const s7 = D.tests.find(r => r.test.startsWith("pre-registration 3"));
+  const chips = [[t.sessions, "mainnet sessions"], [t.windows, "leader windows"], [t.validators, "validators"], [t.clients, "clients"], [t.sent.toLocaleString("en"), "of our transactions"], [(+String(D.blocks.blocks).replace(/,/g, "")).toLocaleString("en"), "full blocks read"], ["0.021 SOL", "total cost"]];
+  $("#chips").innerHTML = chips.map(([v, l]) => `<span><b>${v}</b> ${l}</span>`).join("");
+  // headline numbers: session 7 direct QUIC, conflicts won by fee (from the explorer data)
+  let k = { pre: [0, 0], inside: [0, 0] };
+  for (const w of D.windows) {
+    if (D.sessions[w[0]].id !== "20261104T080046Z-live" || w[4] !== "tpu") continue;
+    const L = w[10].filter(x => x[4] && x[3] >= 0);
+    for (let i = 0; i < L.length; i++) for (let j = i + 1; j < L.length; j++) {
+      const a = L[i], b = L[j]; if (a[2] !== b[2]) continue;
+      const [f, s] = a[3] < b[3] ? [a, b] : [b, a];
+      if (f[1] === s[1]) continue; const feeFirst = f[1] > s[1], sentFirst = f[0] < s[0];
+      if (feeFirst === sentFirst) continue; k[w[5]][1]++; if (feeFirst) k[w[5]][0]++;
+    }
+  }
+  $("#k-pre").textContent = pct(k.pre[0] / k.pre[1]);
+  $("#k-ins").textContent = pct(k.inside[0] / k.inside[1]);
+  if (s7) { $("#k-diff").textContent = sgn(s7.diff); $("#k-diff").nextElementSibling.textContent = `pre-registered test 3: difference, 95% CI ${sgn(s7.lo)} … ${sgn(s7.hi)}, confirmed`; }
+})();
+
+// tests forest
+(function () {
+  const svg = $("#c-tests"), rows = D.tests, H = 52 * rows.length + 40, w = W();
+  svg.setAttribute("viewBox", `0 0 ${w} ${H}`);
+  const L = 330, R = w - 250, x = v => L + (v + 0.3) / 1.1 * (R - L);
+  for (const v of [-0.2, 0, 0.2, 0.4, 0.6, 0.8]) { el("line", { x1: x(v), x2: x(v), y1: 6, y2: H - 28, class: v === 0 ? "zero" : "grid" }, svg); txt(svg, x(v), H - 10, (v > 0 ? "+" : "") + v.toFixed(1), { "text-anchor": "middle" }); }
+  rows.forEach((r, i) => {
+    const y = 26 + i * 52, col = r.kind === "exploratory" ? "var(--neutral)" : r.kind === "all data" ? "var(--orange)" : "var(--blue)";
+    txt(svg, 0, y + 4, r.test.replace(" (exploratory, where the idea came from)", " (exploratory)"), { class: "ink" });
+    el("line", { x1: x(r.lo), x2: x(r.hi), y1: y, y2: y, stroke: col, "stroke-width": 3, "stroke-linecap": "round" }, svg);
+    const filled = r.kind !== "pre-registered" || r.confirmed === "yes";
+    const c = el("circle", { cx: x(r.diff), cy: y, r: 7, fill: filled ? col : "var(--card)", stroke: col, "stroke-width": 2.5 }, svg);
+    const verdict = r.confirmed === "yes" ? " · confirmed" : r.confirmed === "no" ? " · not confirmed" : "";
+    txt(svg, R + 16, y + 4, `${sgn(r.diff)} (${sgn(r.lo)} … ${sgn(r.hi)})${verdict}`, { class: "ink" });
+    const hit = el("rect", { x: 0, y: y - 22, width: w, height: 44, fill: "transparent" }, svg);
+    hover(hit, `<b>${r.test}</b><br>${r.windows} windows<br>difference ${sgn(r.diff)}, 95% CI ${sgn(r.lo)} … ${sgn(r.hi)}${verdict}`);
+  });
+  $("#t-prereg").innerHTML = D.prereg.map(p => `<tr><td><a href="https://github.com/bit-nexus-labs/solana-block-ordering/blob/main/${p.file}">${p.file}</a></td><td>${p.time}</td><td><a href="https://github.com/bit-nexus-labs/solana-block-ordering/commit/${p.commit}"><code>${p.commit}</code></a></td></tr>`).join("");
+})();
+
+// clients
+let phase = "all";
+function drawClients() {
+  const svg = $("#c-clients"); clear(svg);
+  const cs = D.clients.filter(c => c.windows >= 20).map(c => ({ c, d: phase === "all" ? c.all : c[phase] })).filter(o => o.d).sort((a, b) => b.d.fee_agree - a.d.fee_agree);
+  const w = W(), H = 40 * cs.length + 40, L = 160, R = w - 20, x = v => L + (v - 0.3) / 0.7 * (R - L);
+  svg.setAttribute("viewBox", `0 0 ${w} ${H}`);
+  for (const v of [0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]) { el("line", { x1: x(v), x2: x(v), y1: 4, y2: H - 28, class: v === 0.5 ? "zero" : "grid" }, svg); txt(svg, x(v), H - 10, v.toFixed(1), { "text-anchor": "middle" }); }
+  cs.forEach(({ c, d }, i) => {
+    const y = 22 + i * 40;
+    txt(svg, 0, y + 4, c.client, { class: "ink" });
+    for (const [key, col, dy] of [["arrival_agree", "var(--neutral)", -6], ["fee_agree", "var(--orange)", 6]]) {
+      const lo = d[key + "_lo"], hi = d[key + "_hi"], v = d[key];
+      if (lo != null && hi != null) el("line", { x1: x(lo), x2: x(hi), y1: y + dy, y2: y + dy, stroke: col, "stroke-width": 2.5, "stroke-linecap": "round", opacity: .8 }, svg);
+      el("circle", { cx: x(v), cy: y + dy, r: 5.5, fill: col, stroke: "var(--card)", "stroke-width": 2 }, svg);
+    }
+    const hit = el("rect", { x: 0, y: y - 18, width: w, height: 36, fill: "transparent" }, svg);
+    hover(hit, `<b>${c.client}</b> · ${phase === "all" ? "all windows" : phase === "pre" ? "batch before the window" : "batch inside the window"}<br>send order ${fmt(d.arrival_agree)} (${fmt(d.arrival_agree_lo)}–${fmt(d.arrival_agree_hi)})<br>fee ${fmt(d.fee_agree)} (${fmt(d.fee_agree_lo)}–${fmt(d.fee_agree_hi)})<br>fee wins conflicts ${fmt(d.fee_wins_conflicts)}`);
+  });
+  $("#t-clients").innerHTML = D.clients.map(c => { const d = phase === "all" ? c.all : c[phase]; if (!d) return ""; return `<tr><td>${c.client}</td><td class="r">${c.validators}</td><td class="r">${c.windows}</td><td class="r">${(phase === "all" ? c.pairs : d.pairs).toLocaleString("en")}</td><td class="r">${fmt(d.arrival_agree)}</td><td class="r">${fmt(d.fee_agree)}</td><td class="r">${fmt(d.fee_wins_conflicts)}</td><td><span class="tag">${phase === "all" ? c.verdict : d.verdict}</span></td></tr>`; }).join("");
+}
+document.querySelectorAll(".seg button").forEach(b => b.onclick = () => { phase = b.dataset.ph; document.querySelectorAll(".seg button").forEach(x => x.setAttribute("aria-pressed", x === b)); drawClients(); });
+drawClients();
+
+// window explorer
+const FEES = [0, 1000, 10000, 100000, 1000000, 5000000];
+const feeIdx = f => Math.max(0, FEES.indexOf(f));
+function fillSelect(sel, items, keep) { const v = keep ? sel.value : null; sel.innerHTML = items.map(([val, lab]) => `<option value="${val}">${lab}</option>`).join(""); if (v != null && items.some(i => String(i[0]) === v)) sel.value = v; }
+function initExplorer() {
+  fillSelect($("#s-sess"), D.sessions.map((s, i) => [i, `${i + 1}: ${s.id.slice(0, 8)} ${s.id.slice(9, 13)} UTC${s.note ? " · " + s.note : ""}`]));
+  const clients = [...new Set(D.windows.map(w => w[2]))].sort();
+  fillSelect($("#s-client"), [["", "any"], ...clients.map(c => [c, c])]);
+  for (const id of ["#s-sess", "#s-client", "#s-phase"]) $(id).onchange = () => { listWindows(); drawWindow(); };
+  $("#s-win").onchange = drawWindow;
+  // start on the example from the report: session 3, window 16
+  const s3 = D.sessions.findIndex(s => s.id === "20261102T071208Z-live");
+  if (s3 >= 0) $("#s-sess").value = s3;
+  listWindows();
+  if (s3 >= 0) $("#s-win").value = "16";
+  drawWindow();
+}
+function listWindows() {
+  const si = +$("#s-sess").value, cl = $("#s-client").value, ph = $("#s-phase").value;
+  const ws = D.windows.filter(w => w[0] === si && (!cl || w[2] === cl) && (!ph || w[5] === ph));
+  fillSelect($("#s-win"), ws.map(w => { const n = w[10].filter(t => t[4]).length; return [w[1], `#${w[1]} · ${w[2]} · ${w[4] === "tpu" ? "direct" : w[9]} · ${w[5]} · ${n}/${w[10].length} in leader block`]; }), true);
+}
+function drawWindow() {
+  const si = +$("#s-sess").value, wid = +$("#s-win").value;
+  const w = D.windows.find(x => x[0] === si && x[1] === wid), svg = $("#c-window"); clear(svg);
+  if (!w) { $("#w-head").textContent = "No window matches these filters."; return; }
+  const sess = D.sessions[si].id, txs = w[10];
+  const inL = txs.filter(t => t[4] && t[3] >= 0).sort((a, b) => a[2] - b[2] || a[3] - b[3]);
+  const other = txs.filter(t => t[2] && !t[4]).length, never = txs.filter(t => !t[2]).length;
+  $("#w-head").innerHTML = `<b style="color:var(--ink)">${w[2]}</b> leader <code>${w[3].slice(0, 6)}…</code> · ${w[4] === "tpu" ? "direct QUIC" : "RPC (" + w[9] + ")"} · batch ${w[5] === "pre" ? "before the window" : "inside the window"} · ${w[6]} payer${w[6] === "shared" ? "" : "s"} · ${w[7]} fees · ${w[8]} ms apart`;
+  const wd = W(), H = 250, L = 46, R = wd - 10, n = Math.max(inL.length, 1), slotW = (R - L) / Math.max(n, 6), bw = Math.min(46, slotW - 8);
+  svg.setAttribute("viewBox", `0 0 ${wd} ${H}`);
+  const base = H - 46, top = 30, hy = i => base - (i + 1) / 6 * (base - top);
+  for (let i = 0; i < 6; i++) { el("line", { x1: L, x2: R, y1: hy(i), y2: hy(i), class: "grid" }, svg); txt(svg, L - 8, hy(i) + 4, ["0", "1k", "10k", "100k", "1M", "5M"][i], { "text-anchor": "end" }); }
+  el("line", { x1: L, x2: R, y1: base, y2: base, class: "axis" }, svg);
+  if (!inL.length) txt(svg, (L + R) / 2, base - 60, "none of our transactions landed in the scheduled leader's blocks", { "text-anchor": "middle" });
+  let prevSlot = null;
+  inL.forEach((t, i) => {
+    const cx = L + slotW * i + slotW / 2, fi = feeIdx(t[1]), y = hy(fi);
+    if (prevSlot !== null && t[2] !== prevSlot) el("line", { x1: cx - slotW / 2, x2: cx - slotW / 2, y1: top - 10, y2: base + 30, stroke: "var(--muted)", "stroke-dasharray": "2 3" }, svg);
+    if (t[2] !== prevSlot) txt(svg, cx - slotW / 2 + 4, base + 36, "slot " + t[2], { "font-size": 11 });
+    prevSlot = t[2];
+    const r = el("rect", { x: cx - bw / 2, y, width: bw, height: base - y, rx: 4, fill: `var(--f${fi})` }, svg);
+    txt(svg, cx, y - 8, "#" + t[0], { "text-anchor": "middle", class: "ink", "font-weight": 600 });
+    txt(svg, cx, base + 16, String(t[3]), { "text-anchor": "middle", "font-size": 11 });
+    hover(r, `sent as <b>#${t[0]}</b><br>fee ${t[1].toLocaleString("en")} µlamports/CU<br>slot ${t[2]}, position ${t[3]} in the block`);
+  });
+  txt(svg, L - 8, base + 16, "pos", { "text-anchor": "end", "font-size": 11 });
+  // pairs in the same block
+  let a = 0, an = 0, f = 0, fn = 0;
+  for (let i = 0; i < inL.length; i++) for (let j = i + 1; j < inL.length; j++) { const x = inL[i], y = inL[j]; if (x[2] !== y[2]) continue; an++; if (x[0] < y[0]) a++; if (x[1] !== y[1]) { fn++; if (x[1] > y[1]) f++; } }
+  $("#w-kpis").innerHTML = `<span>sent <b>${txs.length}</b></span><span>in the leader's blocks <b>${inL.length}</b></span><span>in another leader's block <b>${other}</b></span><span>never landed <b>${never}</b></span>` + (an ? `<span>same-block pairs in send order <b>${a}/${an}</b></span>` : "") + (fn ? `<span>in fee order <b>${f}/${fn}</b></span>` : "");
+  $("#w-cmd").textContent = `python analysis/verify_window.py --session ${sess} --window ${w[1]}`;
+  const slots = [...new Set(inL.map(t => t[2]))];
+  $("#w-links").innerHTML = slots.length ? "On Solscan: " + slots.map(s => `<a href="https://solscan.io/block/${s}">block ${s}</a>`).join(" · ") + ` · <a href="https://solscan.io/account/${w[3]}">leader</a>` : "";
+}
+initExplorer();
+
+// path
+(function () {
+  const svg = $("#c-path"), rows = D.paths, w = 480, H = 70 * rows.length + 20; svg.setAttribute("viewBox", `0 0 ${w} ${H}`);
+  rows.forEach((r, i) => {
+    const y = 10 + i * 70; txt(svg, 0, y + 12, `${r.path} · ${r.windows} windows`, { class: "ink" });
+    let x0 = 0; for (const [k, col, lab] of [["leader", "var(--blue)", "scheduled leader"], ["other", "var(--orange)", "another leader"], ["never", "var(--neutral)", "never landed"]]) {
+      const wd = r[k] * w; const rect = el("rect", { x: x0, y: y + 22, width: Math.max(wd - 2, 0), height: 26, rx: 4, fill: col }, svg);
+      if (r[k] >= 0.12) txt(svg, x0 + 8, y + 40, pct(r[k]), { fill: k === "never" ? "var(--ink)" : "#fff", style: `fill:${k === "never" ? "var(--ink)" : "#fff"}` });
+      hover(rect, `${r.path}<br>${lab}: ${pct(r[k])}`); x0 += wd;
+    }
+  });
+  const s2 = $("#c-pathfx"), w2 = 480, H2 = 70 * rows.length + 40; s2.setAttribute("viewBox", `0 0 ${w2} ${H2}`);
+  const L = 10, R = w2 - 10, x = v => L + (v + 0.3) / 0.9 * (R - L);
+  for (const v of [-0.2, 0, 0.2, 0.4, 0.6]) { el("line", { x1: x(v), x2: x(v), y1: 0, y2: H2 - 28, class: v === 0 ? "zero" : "grid" }, s2); txt(s2, x(v), H2 - 10, (v > 0 ? "+" : "") + v.toFixed(1), { "text-anchor": "middle" }); }
+  rows.forEach((r, i) => {
+    const y = 34 + i * 70; txt(s2, L, y - 16, `${r.path}: ${sgn(r.diff)} (${sgn(r.lo)} … ${sgn(r.hi)})`, { class: "ink halo" });
+    el("line", { x1: x(r.lo), x2: x(r.hi), y1: y, y2: y, stroke: "var(--orange)", "stroke-width": 3, "stroke-linecap": "round" }, s2);
+    const c = el("circle", { cx: x(r.diff), cy: y, r: 7, fill: "var(--orange)", stroke: "var(--card)", "stroke-width": 2 }, s2);
+    hover(c, `${r.path}<br>${sgn(r.diff)}, 95% CI ${sgn(r.lo)} … ${sgn(r.hi)}`);
+  });
+  const names = { "direct-quic": "direct QUIC", public: "public RPC", rpcfast: "RPC Fast (free plan)", digitalenergy: "Digital Energy (Builder plan)" };
+  const order = ["public", "rpcfast", "digitalenergy", "direct-quic"];
+  $("#t-prov").innerHTML = D.providers.slice().sort((a, b) => order.indexOf(a.provider) - order.indexOf(b.provider)).map(p => `<tr><td>${names[p.provider] || p.provider}</td><td class="r">${p.windows}</td><td class="r">${pct(p.leader)}</td><td class="r">${pct(p.other)}</td><td class="r">${pct(p.never)}</td><td class="r">${fmt(p.delay)}</td></tr>`).join("");
+})();
+
+// whole blocks
+(function () {
+  const b = D.blocks;
+  const n = v => (+String(v).replace(/,/g, "")).toLocaleString("en");
+  $("#blk-sub").textContent = `${n(b.blocks)} full blocks of the same scheduled leaders, ${b.validators} validators, ${n(b.tx)} non-vote transactions. Across a whole block the fee barely predicts position; the fee decides among transactions that wait together. Primary evidence stays our own transactions.`;
+  const svg = $("#c-price"), rows = D.price, w = 480, H = 34 * rows.length + 40; svg.setAttribute("viewBox", `0 0 ${w} ${H}`);
+  const L = 150, R = w - 20, x = v => L + (v - 0.42) / 0.14 * (R - L);
+  for (const v of [0.44, 0.48, 0.5, 0.52, 0.56]) { el("line", { x1: x(v), x2: x(v), y1: 4, y2: H - 28, class: v === 0.5 ? "zero" : "grid" }, svg); txt(svg, x(v), H - 10, v.toFixed(2), { "text-anchor": "middle" }); }
+  rows.forEach((r, i) => {
+    const y = 20 + i * 34, top = i >= rows.length - 2, col = top ? "var(--blue)" : "var(--neutral)";
+    txt(svg, L - 10, y + 4, `${r.bucket} (${pct(r.share)})`, { "text-anchor": "end", class: "ink" });
+    el("line", { x1: x(0.5), x2: x(r.pos), y1: y, y2: y, stroke: col, "stroke-width": 2.5 }, svg);
+    const c = el("circle", { cx: x(r.pos), cy: y, r: 6, fill: col }, svg);
+    hover(c, `cu price ${r.bucket}<br>mean position ${fmt(r.pos, 3)}<br>${pct(r.share)} of all transactions`);
+  });
+  const s2 = $("#c-near"), cs = D.blockClients.slice().sort((a, b) => (b.probe || 0) - (a.probe || 0)), H2 = 30 * cs.length + 40; s2.setAttribute("viewBox", `0 0 ${w} ${H2}`);
+  const L2 = 140, x2 = v => L2 + (v - 0.45) / 0.35 * (R - L2);
+  for (const v of [0.5, 0.6, 0.7, 0.8]) { el("line", { x1: x2(v), x2: x2(v), y1: 4, y2: H2 - 28, class: v === 0.5 ? "zero" : "grid" }, s2); txt(s2, x2(v), H2 - 10, v.toFixed(1), { "text-anchor": "middle" }); }
+  cs.forEach((c, i) => {
+    const y = 18 + i * 30; txt(s2, L2 - 10, y + 4, c.client, { "text-anchor": "end", class: "ink" });
+    if (c.probe != null) el("line", { x1: x2(c.near), x2: x2(c.probe), y1: y, y2: y, stroke: "var(--line)", "stroke-width": 2 }, s2);
+    const a = el("circle", { cx: x2(c.near), cy: y, r: 6, fill: "var(--blue)" }, s2); hover(a, `${c.client}, whole blocks<br>higher fee first ${fmt(c.near, 3)} (${c.blocks} blocks)`);
+    if (c.probe != null) { const p = el("rect", { x: x2(c.probe) - 5.5, y: y - 5.5, width: 11, height: 11, rx: 2, fill: "var(--orange)", transform: `rotate(45 ${x2(c.probe)} ${y})` }, s2); hover(p, `${c.client}, our probes<br>higher fee first ${fmt(c.probe)}`); }
+  });
+})();
+</script>
+</body>
+</html>
