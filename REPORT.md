@@ -174,6 +174,20 @@ the block; through the public RPC, 41–48%.
 
 ![Mechanism](results/mechanism.png)
 
+### 8. Block fees do not always go to the leader's identity
+
+In 176 of the 2,428 window blocks, from 21 of the 174 leaders, the `Fee` reward of the block was
+paid to an account other than the leader's identity, the same account in every block of that
+leader (often with a look-alike address, such as `juigBT…` → `juicQd…`). Checked on chain
+(`analysis/fee_collectors.py`, read only): the schedule names the expected leader for those slots,
+none of the 21 recipients is the identity of any validator, 13 are vote accounts and 8 are ordinary
+wallets. Only the scheduled leader can produce a block for its slot, so these are accounts that
+receive the leader's block fees, not other producers.
+([`results/fee_collectors.csv`](results/fee_collectors.csv))
+
+This matters for any study that, like ours, names a block's producer by its fee recipient: see the
+correction in "What went wrong".
+
 ## Two windows, step by step
 
 Both can be checked on any explorer: the signatures are in `data/` and below.
@@ -339,6 +353,24 @@ Digital Energy, drawn per window. Raw logs of every session, with signatures and
   own accounts) and the session started about half an hour later than planned.
 * **3.11 — the RPC's full blocks had no vote transactions.** The whole-block view is therefore about
   non-vote transactions only.
+* **4.11 — 176 blocks of 21 leaders were wrongly counted as "another leader's block".** `collect`
+  named the producer by the `Fee` reward recipient, and those leaders route their fees to another
+  account (finding 8). Their windows dropped out of the pair analysis (184 of our transactions).
+  Counting every block inside a window as the scheduled leader's, the conclusions do not change
+  ([`results/fee_collectors_sensitivity.csv`](results/fee_collectors_sensitivity.csv)):
+
+  | | as committed | corrected |
+  |---|---|---|
+  | same-block pairs (windows) | 8,437 (335) | 8,944 (364) |
+  | follows send order / fee / fee wins conflicts | 0.70 / 0.67 / 0.48 | 0.70 / 0.67 / 0.48 |
+  | pre-registered test 1 (session 5) | +0.09 (−0.11 … +0.29) | +0.10 (−0.10 … +0.30) |
+  | pre-registered test 2 (session 6, direct) | +0.38 (−0.14 … +0.63) | +0.38 (−0.14 … +0.63) |
+  | pre-registered test 3 (session 7, direct) | +0.35 (+0.15 … +0.53) | +0.37 (+0.19 … +0.54) |
+  | all sessions, direct QUIC | +0.37 (+0.22 … +0.50) | +0.39 (+0.25 … +0.51) |
+
+  The committed tables keep the definition the pre-registered tests ran with; the corrected
+  numbers are the sensitivity check (both columns are resampled with the same seed, so the first can
+  differ from the committed tables in the last digit).
 * **One provider delivered late.** Through Digital Energy our transactions landed about three slots
   after the target. We report it and do not explain it.
 
