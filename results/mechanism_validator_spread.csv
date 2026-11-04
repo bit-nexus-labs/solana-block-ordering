@@ -1,0 +1,9 @@
+client,validators,spread_observed,spread_if_shuffled,p_value
+Agave,6,0.069,0.165,0.976
+AgaveBam,20,0.222,0.212,0.232
+FireBAM,8,0.184,0.168,0.33
+Firedancer,11,0.187,0.176,0.387
+HarmonicAgave,17,0.122,0.142,0.86
+HarmonicFiredancer,14,0.164,0.151,0.274
+JitoLabs,12,0.16,0.22,0.894
+Rakurai,5,0.174,0.129,0.08

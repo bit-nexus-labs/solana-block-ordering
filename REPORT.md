@@ -172,6 +172,17 @@ of that block (quartiles 6%–23%). Sent to arrive inside the window, the median
 the block; through the public RPC, 41–48%.
 ([`results/mechanism_block_position.csv`](results/mechanism_block_position.csv))
 
+**Validators of one client behave alike.** Within each client, the spread of the fee-order share
+across validators (those with at least 20 fee pairs) is no larger than when the validator labels are
+shuffled across windows (permutation p = 0.08–0.98 for the eight clients). With 5–20 validators per
+client and few windows each, this cannot exclude small operator differences, but nothing points to
+them. ([`results/mechanism_validator_spread.csv`](results/mechanism_validator_spread.csv))
+
+**Fuller blocks, slightly more fee order.** Before the window, the share of pairs in fee order rises
+from 0.64 in blocks of up to 320 transactions to 0.74 and 0.76 in fuller ones; inside the window
+from 0.57 to 0.63–0.64. The intervals overlap and block size goes with the hour, so this is a
+trend, not a result. ([`results/mechanism_block_size.csv`](results/mechanism_block_size.csv))
+
 ![Mechanism](results/mechanism.png)
 
 ### 8. Block fees do not always go to the leader's identity
@@ -180,8 +191,8 @@ In 176 of the 2,428 window blocks, from 21 of the 174 leaders, the `Fee` reward 
 paid to an account other than the leader's identity, the same account in every block of that
 leader (often with a look-alike address, such as `juigBT…` → `juicQd…`). Checked on chain
 (`analysis/fee_collectors.py`, read only): the schedule names the expected leader for those slots,
-none of the 21 recipients is the identity of any validator, 13 are vote accounts and 8 are ordinary
-wallets. Only the scheduled leader can produce a block for its slot, so these are accounts that
+none of the 21 recipients is the identity of any validator; 14 are the leader's own vote account and
+7 are ordinary wallets. Only the scheduled leader can produce a block for its slot, so these are accounts that
 receive the leader's block fees, not other producers.
 ([`results/fee_collectors.csv`](results/fee_collectors.csv))
 

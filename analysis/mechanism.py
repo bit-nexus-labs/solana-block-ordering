@@ -93,6 +93,43 @@ def block_position(sends: pd.DataFrame, wins: pd.DataFrame) -> pd.DataFrame:
                          "in_first_slot_of_window": g.first_slot_of_window.mean()}).reset_index()
 
 
+def validator_spread(pairs: pd.DataFrame, n_perm: int = 1000, seed: int = 20261104) -> pd.DataFrame:
+    """Do validators of one client differ more than chance? Spread (SD) of the fee-order share across
+    validators with >= 20 fee pairs, against the same with validator labels shuffled across windows."""
+    rng = np.random.default_rng(seed)
+    p = pairs[pairs.same_block & (pairs.fee_sign != 0)].assign(hit=lambda d: (d.fee_sign > 0).astype(int))
+    pw = p.groupby(["client", "leader", "session", "window_id"]).hit.agg(["sum", "count"]).reset_index()
+    rows = []
+    for c, g in pw.groupby("client"):
+        def spread(labels):
+            v = g.assign(leader=labels).groupby("leader")[["sum", "count"]].sum()
+            v = v[v["count"] >= 20]
+            return (v["sum"] / v["count"]).std() if len(v) >= 3 else np.nan, len(v)
+        obs, n = spread(g.leader.values)
+        if np.isnan(obs):
+            continue
+        sims = np.array([spread(rng.permutation(g.leader.values))[0] for _ in range(n_perm)])
+        sims = sims[~np.isnan(sims)]
+        rows.append({"client": c, "validators": n, "spread_observed": obs, "spread_if_shuffled": float(np.median(sims)),
+                     "p_value": float((sims >= obs).mean())})
+    return pd.DataFrame(rows)
+
+
+def block_size(sends: pd.DataFrame, pairs: pd.DataFrame) -> pd.DataFrame:
+    """Fee-order share by how full the block was (terciles of our window's median block size)."""
+    bt = sends[sends.landed == True].groupby(["session", "window_id"]).block_tx_count.median().rename("btx").reset_index()  # noqa: E712
+    q = bt.btx.quantile([1 / 3, 2 / 3]).values
+    p = pairs[pairs.same_block & (pairs.fee_sign != 0)].merge(bt, on=["session", "window_id"])
+    p["size"] = np.where(p.btx <= q[0], f"≤{q[0]:.0f}", np.where(p.btx <= q[1], f"{q[0]:.0f}–{q[1]:.0f}", f">{q[1]:.0f}"))
+    rows = []
+    for ph in ("pre", "inside"):
+        for sz in (f"≤{q[0]:.0f}", f"{q[0]:.0f}–{q[1]:.0f}", f">{q[1]:.0f}"):
+            g = p[(p.phase == ph) & (p["size"] == sz)]
+            sh, lo, hi = A.cluster_share(g, g.fee_sign > 0)
+            rows.append({"phase": ph, "transactions_per_block": sz, "pairs": len(g), "follows_fee": sh, "lo": lo, "hi": hi})
+    return pd.DataFrame(rows)
+
+
 def figure(cp: pd.DataFrame, gp: pd.DataFrame, out: Path) -> None:
     import matplotlib
     matplotlib.use("Agg")
@@ -149,11 +186,14 @@ def main() -> int:
     wins, pairs = A.window_rows(sends, windows)
     cp, gp = tables(pairs)
     fd, bp = fee_distance(sends, wins), block_position(sends, wins)
+    vs, bs = validator_spread(pairs), block_size(sends, pairs)
     a.out.mkdir(parents=True, exist_ok=True)
     cp.round(3).to_csv(a.out / "mechanism_contention_phase.csv", index=False)
     gp.round(3).to_csv(a.out / "mechanism_send_gap.csv", index=False)
     fd.round(3).to_csv(a.out / "mechanism_fee_distance.csv", index=False)
     bp.round(3).to_csv(a.out / "mechanism_block_position.csv", index=False)
+    vs.round(3).to_csv(a.out / "mechanism_validator_spread.csv", index=False)
+    bs.round(3).to_csv(a.out / "mechanism_block_size.csv", index=False)
     figure(cp, gp, a.out)
     print(cp.round(2).to_markdown(index=False))
     print()
@@ -162,6 +202,10 @@ def main() -> int:
     print(fd.round(2).to_markdown(index=False))
     print()
     print(bp.round(2).to_markdown(index=False))
+    print()
+    print(vs.round(3).to_markdown(index=False))
+    print()
+    print(bs.round(2).to_markdown(index=False))
     return 0
 
 
