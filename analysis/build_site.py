@@ -78,7 +78,9 @@ def build_windows(data: Path) -> tuple[list, list]:
                 txs.append([s["send_rank"] + 1, s["cu_price_micro_lamports"],
                             l.get("slot") if ok else 0,
                             l.get("index_in_block") if ok and l.get("index_in_block") is not None else -1,
-                            1 if ok and l.get("block_producer") == w["leader"] else 0,
+                            # in the scheduled leader's window slots (only that leader can produce them;
+                            # some leaders pay block fees to another account, see fee_collectors.py)
+                            1 if ok and w["first_slot"] <= l["slot"] <= w["last_slot"] else 0,
                             s["signature"] if ok else ""])
             windows.append([len(sessions) - 1, w["window_id"], w["client_id"], w["leader"], arm["path"],
                             arm.get("phase", "pre"), arm["contention"], arm["fees"], arm["spacing_ms"],
@@ -145,6 +147,8 @@ def build_data(root: Path) -> dict:
                    "validators": len({w[3] for w in windows}), "clients": len({w[2] for w in windows}),
                    "sent": sent, "landed": landed},
         "prereg": [{"file": f, "commit": c, "time": t} for f, c, t in PREREG_COMMITS],
+        "hero": next(({"pre": num(r["fee_wins_pre"]), "inside": num(r["fee_wins_inside"])}
+                      for r in read_csv(root / "results-s7" / "phase_effect.csv") if r["client"] == "all clients"), None),
     }
 
 
